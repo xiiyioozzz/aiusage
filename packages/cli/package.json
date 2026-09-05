@@ -6,12 +6,12 @@
   "private": false,
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/ennann/aiusage.git",
+    "url": "git+https://github.com/imetn/aiusage.git",
     "directory": "packages/cli"
   },
-  "homepage": "https://github.com/ennann/aiusage",
+  "homepage": "https://github.com/imetn/aiusage",
   "bugs": {
-    "url": "https://github.com/ennann/aiusage/issues"
+    "url": "https://github.com/imetn/aiusage/issues"
   },
   "type": "module",
   "publishConfig": {

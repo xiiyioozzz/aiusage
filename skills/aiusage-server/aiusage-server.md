@@ -42,7 +42,7 @@ If you need to script the deployment or the user prefers manual control:
 ### Step 1: Clone and install
 
 ```bash
-git clone https://github.com/ennann/aiusage.git
+git clone https://github.com/imetn/aiusage.git
 cd aiusage
 pnpm install
 ```

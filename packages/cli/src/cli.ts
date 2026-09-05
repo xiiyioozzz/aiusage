@@ -135,10 +135,10 @@ try {
     await runImport(parsed.flags, parsed.positionals);
   } else if (command === 'setup') {
     console.log('To deploy the server, clone the repo and run the setup wizard:\n');
-    console.log('  git clone https://github.com/ennann/aiusage.git');
+    console.log('  git clone https://github.com/imetn/aiusage.git');
     console.log('  cd aiusage && pnpm install');
     console.log('  pnpm setup\n');
-    console.log('See: https://github.com/ennann/aiusage#deploy-your-own-server');
+    console.log('See: https://github.com/imetn/aiusage#deploy-your-own-server');
   } else if (command === '--help' || command === '-h' || command === 'help') {
     const zh = (await readConfig()).lang === 'zh';
     printHelp(zh);
