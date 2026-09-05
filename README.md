@@ -71,7 +71,7 @@ graph LR
 Copy this prompt, paste it into your AI coding agent (Claude Code, Codex, Copilot, Gemini, etc.):
 
 ```text
-Clone https://github.com/ennann/aiusage.git, read skills/aiusage-server/aiusage-server.md,
+Clone https://github.com/imetn/aiusage.git, read skills/aiusage-server/aiusage-server.md,
 and help me deploy AIUsage to my Cloudflare account.
 After the server is up, follow skills/aiusage-cli/aiusage-cli.md to connect this device.
 ```
@@ -79,7 +79,7 @@ After the server is up, follow skills/aiusage-cli/aiusage-cli.md to connect this
 ### Or deploy manually
 
 ```bash
-git clone https://github.com/ennann/aiusage.git
+git clone https://github.com/imetn/aiusage.git
 cd aiusage && pnpm install
 npx wrangler login
 pnpm setup

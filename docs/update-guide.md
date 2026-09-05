@@ -22,7 +22,7 @@ Cloudflare Worker (auto-deploy on push)
 
 ### Step 1: Fork the repository
 
-Go to [github.com/ennann/aiusage](https://github.com/ennann/aiusage) and click **Fork** to create a copy under your GitHub account.
+Go to [github.com/imetn/aiusage](https://github.com/imetn/aiusage) and click **Fork** to create a copy under your GitHub account.
 
 ### Step 2: Connect to Cloudflare Workers
 
@@ -72,7 +72,7 @@ When the upstream repository (`ennann/aiusage`) releases new features or fixes, 
 
 ```bash
 # Add upstream remote (one-time)
-git remote add upstream https://github.com/ennann/aiusage.git
+git remote add upstream https://github.com/imetn/aiusage.git
 
 # Fetch and merge upstream changes
 git fetch upstream
@@ -101,7 +101,7 @@ jobs:
       - uses: actions/checkout@v4
       - name: Sync upstream
         run: |
-          git remote add upstream https://github.com/ennann/aiusage.git
+          git remote add upstream https://github.com/imetn/aiusage.git
           git fetch upstream
           git merge upstream/main --no-edit
           git push

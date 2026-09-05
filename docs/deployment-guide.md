@@ -26,7 +26,7 @@ Device 03 ──sync──▶
 ### One-Click Setup
 
 ```bash
-git clone https://github.com/ennann/aiusage.git
+git clone https://github.com/imetn/aiusage.git
 cd aiusage
 pnpm install
 npx wrangler login
@@ -56,7 +56,7 @@ Save these values. The wizard also writes them to `.credentials` in the repo roo
 #### 1. Clone and install
 
 ```bash
-git clone https://github.com/ennann/aiusage.git
+git clone https://github.com/imetn/aiusage.git
 cd aiusage
 pnpm install
 ```

@@ -67,7 +67,7 @@ graph LR
 复制以下提示词，粘贴给你的 AI 编程代理（Claude Code、Codex、Copilot、Gemini 等）：
 
 ```text
-克隆 https://github.com/ennann/aiusage.git，阅读 skills/aiusage-server/aiusage-server.md，
+克隆 https://github.com/imetn/aiusage.git，阅读 skills/aiusage-server/aiusage-server.md，
 帮我把 AIUsage 部署到我的 Cloudflare 账户。
 部署完成后，按照 skills/aiusage-cli/aiusage-cli.md 把这台设备接入。
 ```
@@ -75,7 +75,7 @@ graph LR
 ### 或手动部署
 
 ```bash
-git clone https://github.com/ennann/aiusage.git
+git clone https://github.com/imetn/aiusage.git
 cd aiusage && pnpm install
 npx wrangler login
 pnpm setup

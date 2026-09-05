@@ -212,7 +212,7 @@ export function Layout({ children }: { children: React.ReactNode }) {
               </div>
               <div className="flex items-center gap-4">
                 <a
-                  href="https://github.com/ennann/aiusage"
+                  href="https://github.com/imetn/aiusage"
                   target="_blank"
                   rel="noopener noreferrer"
                   className="flex items-center gap-1.5 text-slate-400 transition-colors hover:text-slate-600 dark:text-slate-500 dark:hover:text-slate-300"
