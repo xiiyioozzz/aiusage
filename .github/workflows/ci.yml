@@ -124,3 +124,5 @@ jobs:
 
           publish_if_new packages/cli true
           publish_if_new packages/pricing false
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
