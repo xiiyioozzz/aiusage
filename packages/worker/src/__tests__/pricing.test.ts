@@ -37,11 +37,11 @@ describe('calculateCost: 基本计费', () => {
       cacheWriteTokens: 0,
       outputTokens: 20_000,
       reasoningOutputTokens: 0,
-      costUSD: 5.25,
+      costUSD: 4.1,
       pricingVersion: getPricingCatalog().version,
     });
 
-    expect(result.estimatedCostUsd).toBe(5.25);
+    expect(result.estimatedCostUsd).toBe(4.1);
     expect(result.costStatus).toBe('exact');
   });
 
@@ -58,11 +58,11 @@ describe('calculateCost: 基本计费', () => {
       cacheWriteTokens: 0,
       outputTokens: 20_000,
       reasoningOutputTokens: 0,
-      costUSD: 5.25,
+      costUSD: 4.1,
       pricingVersion: 'stale-catalog',
     });
 
-    expect(result.estimatedCostUsd).toBe(3.1);
+    expect(result.estimatedCostUsd).toBe(2.4);
     expect(result.costStatus).toBe('estimated');
   });
 
@@ -124,7 +124,7 @@ describe('calculateCost: 基本计费', () => {
       costUSD: 0,
     });
 
-    expect(result.estimatedCostUsd).toBe(2.6);
+    expect(result.estimatedCostUsd).toBe(2);
     expect(result.costStatus).toBe('estimated');
   });
 

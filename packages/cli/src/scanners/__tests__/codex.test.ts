@@ -14,8 +14,8 @@ async function writeSession(dir: string, filename: string, lines: object[]): Pro
 
 function tokenCountEvent(
   timestamp: string,
-  last: { input: number; cached: number; output: number; reasoning?: number },
-  total: { input: number; cached: number; output: number; reasoning?: number },
+  last: { input: number; cached: number; cacheWrite?: number; output: number; reasoning?: number },
+  total: { input: number; cached: number; cacheWrite?: number; output: number; reasoning?: number },
   model = 'gpt-5-codex',
   cwd = '/Users/test/project',
 ): object[] {
@@ -34,12 +34,14 @@ function tokenCountEvent(
         last_token_usage: {
           input_tokens: last.input,
           cached_input_tokens: last.cached,
+          cache_write_input_tokens: last.cacheWrite ?? 0,
           output_tokens: last.output,
           reasoning_output_tokens: last.reasoning ?? 0,
         },
         total_token_usage: {
           input_tokens: total.input,
           cached_input_tokens: total.cached,
+          cache_write_input_tokens: total.cacheWrite ?? 0,
           output_tokens: total.output,
           reasoning_output_tokens: total.reasoning ?? 0,
         },
@@ -99,6 +101,25 @@ describe('Fix 1: non-cached input cost formula', () => {
     expect(results[0].cachedInputTokens).toBe(5000);
   });
 
+  it('carves cache writes out of uncached input and preserves their cost', async () => {
+    const day = '2026-09-05';
+    const sessionDir = join(tmpDir, 'sessions', '2026', '09', '05');
+    const events = tokenCountEvent(
+      `${day}T10:00:00.000Z`,
+      { input: 100_000, cached: 60_000, cacheWrite: 30_000, output: 10_000 },
+      { input: 100_000, cached: 60_000, cacheWrite: 30_000, output: 10_000 },
+      'gpt-6-astra',
+    );
+    await writeSession(sessionDir, 'rollout-test.jsonl', events);
+
+    const [result] = await scanCodex(day, tmpDir);
+    expect(result.inputTokens).toBe(10_000);
+    expect(result.cachedInputTokens).toBe(60_000);
+    expect(result.cacheWriteTokens).toBe(30_000);
+    expect(result.costUSD).toBeCloseTo(1.035, 4);
+    expect(result.pricingVersion).toBe(PRICING_VERSION);
+  });
+
   it('accumulates multiple turns with correct non-cached split', async () => {
     const day = '2025-10-16';
     const sessionDir = join(tmpDir, 'sessions', '2025', '10', '16');
@@ -149,12 +170,28 @@ describe('Codex tiered pricing', () => {
     expect(result.eventCount).toBe(2);
     expect(result.inputTokens).toBe(500_000);
     expect(result.outputTokens).toBe(20_000);
-    expect(result.costUSD).toBeCloseTo(5.25, 4);
+    expect(result.costUSD).toBeCloseTo(4.1, 4);
     expect(result.pricingVersion).toBe(PRICING_VERSION);
   });
 });
 
 describe('Codex service tier', () => {
+  it('adds fast suffix for GPT-6 Astra Codex usage', async () => {
+    const day = '2026-09-05';
+    await writeFile(join(tmpDir, 'config.toml'), 'service_tier = "fast"\n');
+    const sessionDir = join(tmpDir, 'sessions', '2026', '09', '05');
+    const events = tokenCountEvent(
+      `${day}T10:00:00.000Z`,
+      { input: 10_000, cached: 8_000, output: 500 },
+      { input: 10_000, cached: 8_000, output: 500 },
+      'gpt-6-astra',
+    );
+    await writeSession(sessionDir, 'rollout-test.jsonl', events);
+
+    const [result] = await scanCodex(day, tmpDir);
+    expect(result.model).toBe('gpt-6-astra-fast');
+  });
+
   it('adds priority suffix for GPT-5.6 Codex usage', async () => {
     const day = '2026-07-10';
     await writeFile(join(tmpDir, 'config.toml'), 'service_tier = "priority"\n');

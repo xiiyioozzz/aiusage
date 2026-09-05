@@ -40,6 +40,7 @@ interface TokenUsage {
   input_tokens?: number;
   cached_input_tokens?: number;
   cache_read_input_tokens?: number;
+  cache_write_input_tokens?: number;
   output_tokens?: number;
   reasoning_output_tokens?: number;
   total_tokens?: number;
@@ -48,6 +49,7 @@ interface TokenUsage {
 interface CodexTotals {
   input: number;
   cached: number;
+  cacheWrite: number;
   output: number;
   reasoning: number;
 }
@@ -75,6 +77,7 @@ interface CodexUsageEvent {
   projectFields: ProjectFields;
   inputTokens: number;
   cachedInputTokens: number;
+  cacheWriteTokens: number;
   outputTokens: number;
   reasoningOutputTokens: number;
   costUSD?: number;
@@ -257,23 +260,24 @@ async function processCodexFile(
       }
       const { tokens, nextTotals } = parsed;
       const cachedInput = Math.min(tokens.cached, tokens.input);
-      const nonCachedInput = Math.max(tokens.input - cachedInput, 0);
+      const cacheWriteInput = Math.min(tokens.cacheWrite, Math.max(tokens.input - cachedInput, 0));
+      const nonCachedInput = Math.max(tokens.input - cachedInput - cacheWriteInput, 0);
       const output = tokens.output;
       const reasoning = tokens.reasoning;
-      if (nonCachedInput + cachedInput + output + reasoning === 0) continue;
+      if (nonCachedInput + cachedInput + cacheWriteInput + output + reasoning === 0) continue;
       state.previousTotals = nextTotals;
 
       const dedupScope = state.sessionForkedFromId
         ?? state.sessionIdFromMeta
         ?? fileSessionId;
       const signature = total
-        ? `codex|${dedupScope}|${state.currentModel}|${total.input}|${total.cached}|${total.output}|${total.reasoning}`
-        : `codex|${dedupScope}|${state.currentModel}|${ts.getTime()}|${tokens.input}|${tokens.cached}|${tokens.output}|${tokens.reasoning}`;
+        ? `codex|${dedupScope}|${state.currentModel}|${total.input}|${total.cached}|${total.cacheWrite}|${total.output}|${total.reasoning}`
+        : `codex|${dedupScope}|${state.currentModel}|${ts.getTime()}|${tokens.input}|${tokens.cached}|${tokens.cacheWrite}|${tokens.output}|${tokens.reasoning}`;
 
       const eventCost = calculateCost('openai', 'codex', state.currentModel, {
         inputTokens: nonCachedInput,
         cachedInputTokens: cachedInput,
-        cacheWriteTokens: 0,
+        cacheWriteTokens: cacheWriteInput,
         outputTokens: output,
       });
       const exactEventCost = eventCost.costStatus === 'exact' ? eventCost.estimatedCostUsd : undefined;
@@ -284,6 +288,7 @@ async function processCodexFile(
         projectFields: { ...state.projectFields },
         inputTokens: nonCachedInput,
         cachedInputTokens: cachedInput,
+        cacheWriteTokens: cacheWriteInput,
         outputTokens: output,
         reasoningOutputTokens: reasoning,
         costUSD: exactEventCost,
@@ -310,6 +315,7 @@ function mergeCodexEvent(
     existing.eventCount += 1;
     existing.inputTokens += event.inputTokens;
     existing.cachedInputTokens += event.cachedInputTokens;
+    existing.cacheWriteTokens += event.cacheWriteTokens;
     existing.outputTokens += event.outputTokens;
     existing.reasoningOutputTokens += event.reasoningOutputTokens;
     if (event.costUSD !== undefined) {
@@ -330,7 +336,7 @@ function mergeCodexEvent(
     eventCount: 1,
     inputTokens: event.inputTokens,
     cachedInputTokens: event.cachedInputTokens,
-    cacheWriteTokens: 0,
+    cacheWriteTokens: event.cacheWriteTokens,
     outputTokens: event.outputTokens,
     reasoningOutputTokens: event.reasoningOutputTokens,
   };
@@ -370,6 +376,7 @@ function totalsFromUsage(usage: TokenUsage): CodexTotals {
       clampToken(usage.cached_input_tokens),
       clampToken(usage.cache_read_input_tokens),
     ),
+    cacheWrite: clampToken(usage.cache_write_input_tokens),
     output: clampToken(usage.output_tokens),
     reasoning: clampToken(usage.reasoning_output_tokens),
   };
@@ -378,16 +385,18 @@ function totalsFromUsage(usage: TokenUsage): CodexTotals {
 function totalsEqual(a: CodexTotals, b: CodexTotals): boolean {
   return a.input === b.input
     && a.cached === b.cached
+    && a.cacheWrite === b.cacheWrite
     && a.output === b.output
     && a.reasoning === b.reasoning;
 }
 
 function totalsDelta(current: CodexTotals, previous: CodexTotals): CodexTotals | undefined {
-  if (current.input < previous.input || current.cached < previous.cached
+  if (current.input < previous.input || current.cached < previous.cached || current.cacheWrite < previous.cacheWrite
     || current.output < previous.output || current.reasoning < previous.reasoning) return undefined;
   return {
     input: current.input - previous.input,
     cached: current.cached - previous.cached,
+    cacheWrite: current.cacheWrite - previous.cacheWrite,
     output: current.output - previous.output,
     reasoning: current.reasoning - previous.reasoning,
   };
@@ -397,13 +406,14 @@ function totalsAdd(a: CodexTotals, b: CodexTotals): CodexTotals {
   return {
     input: a.input + b.input,
     cached: a.cached + b.cached,
+    cacheWrite: a.cacheWrite + b.cacheWrite,
     output: a.output + b.output,
     reasoning: a.reasoning + b.reasoning,
   };
 }
 
 function totalsSum(value: CodexTotals): number {
-  return value.input + value.cached + value.output + value.reasoning;
+  return value.input + value.cached + value.cacheWrite + value.output + value.reasoning;
 }
 
 function looksLikeStaleRegression(current: CodexTotals, previous: CodexTotals, last: CodexTotals): boolean {
@@ -460,6 +470,7 @@ function shouldSkipInheritedSnapshot(
   return Boolean(totals && baseline
     && totals.input <= baseline.input
     && totals.cached <= baseline.cached
+    && totals.cacheWrite <= baseline.cacheWrite
     && totals.output <= baseline.output
     && totals.reasoning <= baseline.reasoning);
 }
@@ -542,7 +553,7 @@ async function detectCodexServiceTier(baseDir: string): Promise<CodexServiceTier
 function applyCodexServiceTier(model: string, serviceTier: CodexServiceTier): string {
   if (!serviceTier) return model;
   if (model.endsWith('-fast') || model.endsWith('-priority')) return model;
-  const supportsFast = model === 'gpt-5.5' || model === 'gpt-5.4';
+  const supportsFast = model === 'gpt-6-astra' || model === 'gpt-5.5' || model === 'gpt-5.4';
   const supportsPriority =
     model === 'gpt-5.6' ||
     model === 'gpt-5.6-sol' ||
