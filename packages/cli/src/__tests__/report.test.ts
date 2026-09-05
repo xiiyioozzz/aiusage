@@ -209,15 +209,15 @@ describe('calculateBreakdownCost', () => {
       cacheWriteTokens: 0,
       outputTokens: 20_000,
       reasoningOutputTokens: 0,
-      costUSD: 5.25,
+      costUSD: 4.1,
       pricingVersion: catalog.version,
     };
 
-    expect(calculateBreakdownCost(breakdown, new Set(), catalog)).toBe(5.25);
+    expect(calculateBreakdownCost(breakdown, new Set(), catalog)).toBe(4.1);
 
     const warnings = new Set<string>();
     const futureCatalog = { ...catalog, version: 'future-catalog' };
-    expect(calculateBreakdownCost(breakdown, warnings, futureCatalog)).toBe(3.1);
+    expect(calculateBreakdownCost(breakdown, warnings, futureCatalog)).toBe(2.4);
     expect([...warnings]).toEqual(['gpt-5.6-sol 的阶梯价格已按每事件平均输入量估算。']);
   });
 
@@ -335,7 +335,7 @@ describe('calculateBreakdownCost', () => {
       costUSD: 0,
     }, warnings);
 
-    expect(cost).toBe(2.6);
+    expect(cost).toBe(2);
     expect([...warnings]).toEqual(['gpt-5.6-sol 的阶梯价格已按每事件平均输入量估算。']);
   });
 });
