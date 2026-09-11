@@ -27,7 +27,6 @@ import { ActivityHeatmap } from './components/activity-heatmap';
 import { buildActivityHeatmapData } from './utils/activity-heatmap-data';
 import { HeaderLogo, FooterLogo, useFaviconFromLogo } from './components/site-logo';
 import { SITE_TITLE } from './site-config';
-import type { InteractionMetricItem, InteractionMetricsPayload } from '@aiusage/shared';
 import codexIcon from '@lobehub/icons-static-svg/icons/codex-color.svg?url';
 import claudeCodeIcon from '@lobehub/icons-static-svg/icons/claudecode-color.svg?url';
 import claudeIcon from '@lobehub/icons-static-svg/icons/claude-color.svg?url';
@@ -378,108 +377,6 @@ function MultiSelectFilter({
   );
 }
 
-function InteractionMetricTile({
-  label,
-  value,
-  suffix,
-}: {
-  label: string;
-  value: string;
-  suffix?: string;
-}) {
-  return (
-    <div className="min-w-0 border-b border-slate-100 pb-3 last:border-b-0 dark:border-white/[0.08] sm:border-b-0 sm:pb-0">
-      <div className="text-[11px] font-medium uppercase tracking-[0.06em] text-slate-400 dark:text-slate-500">
-        {label}
-      </div>
-      <div className="mt-1.5 text-[20px] font-semibold leading-none tracking-tight text-slate-900 dark:text-slate-300">
-        {value}
-        {suffix && <span className="text-slate-300 dark:text-slate-600">{suffix}</span>}
-      </div>
-    </div>
-  );
-}
-
-function InteractionTopList({
-  title,
-  items,
-  locale,
-  proxyLabel,
-}: {
-  title: string;
-  items: InteractionMetricItem[];
-  locale: Locale;
-  proxyLabel: string;
-}) {
-  if (!items.length) return null;
-  const max = Math.max(...items.map((item) => item.eventCount), 1);
-  return (
-    <div className="min-w-0">
-      <h3 className="mb-3 text-[13px] font-semibold text-slate-900 dark:text-slate-300">{title}</h3>
-      <div className="grid gap-2.5">
-        {items.slice(0, 6).map((item) => {
-          const proxy = item.proxyCount ?? 0;
-          const exact = Math.max(0, item.eventCount - proxy);
-          const value = proxy > 0 && exact > 0
-            ? `${formatCompact(exact, locale)} / ${formatCompact(proxy, locale)} ${proxyLabel}`
-            : proxy > 0
-            ? `${formatCompact(proxy, locale)} ${proxyLabel}`
-            : formatCompact(item.eventCount, locale);
-          return (
-            <div key={item.value} className="min-w-0">
-              <div className="mb-1 flex items-baseline justify-between gap-3 text-[12px]">
-                <span className="truncate font-medium text-slate-600 dark:text-slate-400">{item.label}</span>
-                <span className="shrink-0 tabular-nums text-slate-400 dark:text-slate-500">{value}</span>
-              </div>
-              <div className="h-1.5 overflow-hidden rounded-full bg-slate-100 dark:bg-[#1a1a1a]">
-                <div
-                  className="h-full rounded-full bg-slate-800 transition-all duration-500 dark:bg-slate-300"
-                  style={{ width: `${Math.max(4, (item.eventCount / max) * 100)}%` }}
-                />
-              </div>
-            </div>
-          );
-        })}
-      </div>
-    </div>
-  );
-}
-
-function InteractionMetricsSection({
-  metrics,
-  t,
-  locale,
-  animationDelay = '150ms',
-}: {
-  metrics: InteractionMetricsPayload;
-  t: T;
-  locale: Locale;
-  animationDelay?: string;
-}) {
-  return (
-    <div className="card fade-up p-6" style={{ animationDelay }}>
-      <SectionHeader
-        title={t.interactionMetrics}
-        stat={`${formatCompact(metrics.exactCount, locale)} ${t.exactEvents}`}
-      />
-      <div className="mt-5 grid gap-4 sm:grid-cols-4">
-        <InteractionMetricTile label={t.functionCalls} value={formatCompact(metrics.functionCallCount, locale)} />
-        <InteractionMetricTile label={t.toolCalls} value={formatCompact(metrics.toolCallCount, locale)} />
-        <InteractionMetricTile
-          label={t.skillCalls}
-          value={formatCompact(metrics.skillCallCount, locale)}
-          suffix={metrics.skillProxyCount > 0 ? ` / ${formatCompact(metrics.skillProxyCount, locale)}` : undefined}
-        />
-        <InteractionMetricTile label={t.subagents} value={formatCompact(metrics.subagentCount, locale)} />
-      </div>
-      <div className="mt-6 grid gap-6 lg:grid-cols-2">
-        <InteractionTopList title={t.topTools} items={metrics.topTools} locale={locale} proxyLabel={t.proxy} />
-        <InteractionTopList title={t.topSkills} items={metrics.topSkills} locale={locale} proxyLabel={t.proxy} />
-      </div>
-    </div>
-  );
-}
-
 // ────────────────────────────────────────
 // App
 // ────────────────────────────────────────
@@ -767,10 +664,6 @@ export function App() {
             <SectionHeader title={locale === 'zh' ? '年度活跃热力图' : 'Activity Heatmap'} />
             <ActivityHeatmap days={activityHeatmap.days} metricLabel={activityHeatmap.metricLabel} locale={locale} />
           </div>
-
-          {overview?.interactionMetrics && (
-            <InteractionMetricsSection metrics={overview.interactionMetrics} t={t} locale={locale} animationDelay="150ms" />
-          )}
 
           {/* ── Cost Trend ── */}
           <div className="card fade-up p-6" style={{ animationDelay: '180ms' }}>
