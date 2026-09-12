@@ -1,5 +1,5 @@
 import { createReadStream } from 'node:fs';
-import { readdir } from 'node:fs/promises';
+import { readdir, realpath } from 'node:fs/promises';
 import { join } from 'node:path';
 import { homedir } from 'node:os';
 import { createInterface } from 'node:readline';
@@ -8,6 +8,8 @@ import { inferProviderFromModel, normalizeModelName, runWithConcurrency, type Pr
 
 const FILE_CONCURRENCY = 16;
 const MAX_LINE_BYTES = 64 * 1024 * 1024; // 64 MB
+const MAX_COWORK_DISCOVERY_DEPTH = 8;
+const COWORK_IGNORED_DIRS = new Set(['rpm', 'skills']);
 
 interface ClaudeRecord {
   timestamp?: string;
@@ -55,19 +57,73 @@ interface ClaudeSeenUsage {
   snapshot: ClaudeUsageSnapshot;
 }
 
-function getClaudeProjectDirs(claudeDir?: string): string[] {
+interface ClaudeDiscoveryOptions {
+  homeDir?: string;
+  platform?: NodeJS.Platform;
+  env?: NodeJS.ProcessEnv;
+}
+
+/**
+ * Resolve every Claude Code-compatible project directory visible locally.
+ * Claude Desktop Cowork keeps one private .claude root per local-agent session.
+ */
+export async function discoverClaudeProjectDirs(
+  claudeDir?: string,
+  options: ClaudeDiscoveryOptions = {},
+): Promise<string[]> {
   if (claudeDir) return [claudeDir];
 
-  const envVar = process.env.CLAUDE_CONFIG_DIR?.trim();
-  if (envVar) {
-    return envVar.split(',').map(p => p.trim()).filter(Boolean).map(p => join(p, 'projects'));
-  }
-
-  const home = homedir();
-  return [
+  const home = options.homeDir ?? homedir();
+  const platform = options.platform ?? process.platform;
+  const env = options.env ?? process.env;
+  const candidates = [
     join(home, '.config', 'claude', 'projects'),
     join(home, '.claude', 'projects'),
   ];
+
+  const configured = env.CLAUDE_CONFIG_DIR?.trim();
+  if (configured) {
+    for (const root of configured.split(',').map(p => p.trim()).filter(Boolean)) {
+      candidates.push(join(root, 'projects'));
+    }
+  }
+
+  try {
+    const entries = await readdir(home, { withFileTypes: true });
+    for (const entry of entries) {
+      if (!/^\.claude-.+/.test(entry.name)) continue;
+      if (!entry.isDirectory() && !entry.isSymbolicLink()) continue;
+      candidates.push(join(home, entry.name, 'projects'));
+    }
+  } catch {
+    // Default and configured roots remain usable when home discovery fails.
+  }
+
+  const desktopDataDir = platform === 'darwin'
+    ? join(home, 'Library', 'Application Support', 'Claude')
+    : platform === 'win32'
+      ? join(env.APPDATA?.trim() || join(home, 'AppData', 'Roaming'), 'Claude')
+      : join(env.XDG_CONFIG_HOME?.trim() || join(home, '.config'), 'Claude');
+  await discoverCoworkProjectDirs(
+    join(desktopDataDir, 'local-agent-mode-sessions'),
+    0,
+    candidates,
+  );
+
+  const seen = new Set<string>();
+  const unique: string[] = [];
+  for (const candidate of candidates) {
+    let canonical = candidate;
+    try {
+      canonical = await realpath(candidate);
+    } catch {
+      // Missing roots are harmless; the scanner skips them below.
+    }
+    if (seen.has(canonical)) continue;
+    seen.add(canonical);
+    unique.push(candidate);
+  }
+  return unique;
 }
 
 export async function scanClaude(
@@ -88,7 +144,7 @@ export async function scanClaudeDates(
   const groupedByDate = new Map<string, Map<string, IngestBreakdown>>();
   for (const targetDate of targetDateSet) groupedByDate.set(targetDate, new Map());
 
-  const baseDirs = getClaudeProjectDirs(claudeDir);
+  const baseDirs = await discoverClaudeProjectDirs(claudeDir);
 
   // Claude Code 某些代理/兼容模型没有 requestId，但仍会把同一 messageId
   // 复制到父会话和 sidechain 文件；此时退化为 message.id 去重。
@@ -360,5 +416,30 @@ async function walkForJsonl(dir: string, result: string[]): Promise<void> {
     } else if (entry.name.endsWith('.jsonl')) {
       result.push(fullPath);
     }
+  }
+}
+
+async function discoverCoworkProjectDirs(
+  dir: string,
+  depth: number,
+  result: string[],
+): Promise<void> {
+  let entries;
+  try {
+    entries = await readdir(dir, { withFileTypes: true });
+  } catch {
+    return;
+  }
+
+  const claudeRoot = entries.find(entry => entry.name === '.claude' && entry.isDirectory());
+  if (claudeRoot) {
+    result.push(join(dir, '.claude', 'projects'));
+    return;
+  }
+  if (depth >= MAX_COWORK_DISCOVERY_DEPTH) return;
+
+  for (const entry of entries) {
+    if (!entry.isDirectory() || COWORK_IGNORED_DIRS.has(entry.name)) continue;
+    await discoverCoworkProjectDirs(join(dir, entry.name), depth + 1, result);
   }
 }

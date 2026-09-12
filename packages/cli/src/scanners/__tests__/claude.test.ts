@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { mkdir, writeFile, rm } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
-import { scanClaudeDates } from '../claude.js';
+import { discoverClaudeProjectDirs, scanClaudeDates } from '../claude.js';
 
 // ─── helpers ────────────────────────────────────────────────────────────────
 
@@ -176,6 +176,47 @@ describe('JSONL scanning', () => {
   it('returns empty array for a date with no JSONL data and no stats-cache', async () => {
     const result = await scanClaudeDates(['2025-11-01'], join(tmpDir, 'projects'));
     expect(result.get('2025-11-01')).toEqual([]);
+  });
+});
+
+describe('Claude data directory discovery', () => {
+  it('includes default, configured, multi-profile, and Desktop Cowork roots', async () => {
+    const homeDir = join(tmpDir, 'home');
+    const configuredRoot = join(tmpDir, 'configured-claude');
+    const profileProjects = join(homeDir, '.claude-work', 'projects');
+    const coworkProjects = join(
+      homeDir,
+      'Library',
+      'Application Support',
+      'Claude',
+      'local-agent-mode-sessions',
+      'session-a',
+      'run-a',
+      'local-a',
+      '.claude',
+      'projects',
+    );
+    await Promise.all([
+      mkdir(join(homeDir, '.claude', 'projects'), { recursive: true }),
+      mkdir(profileProjects, { recursive: true }),
+      mkdir(join(configuredRoot, 'projects'), { recursive: true }),
+      mkdir(coworkProjects, { recursive: true }),
+    ]);
+
+    const dirs = await discoverClaudeProjectDirs(undefined, {
+      homeDir,
+      platform: 'darwin',
+      env: { CLAUDE_CONFIG_DIR: configuredRoot },
+    });
+
+    expect(dirs).toEqual(expect.arrayContaining([
+      join(homeDir, '.config', 'claude', 'projects'),
+      join(homeDir, '.claude', 'projects'),
+      join(configuredRoot, 'projects'),
+      profileProjects,
+      coworkProjects,
+    ]));
+    expect(new Set(dirs).size).toBe(dirs.length);
   });
 });
 
