@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { mkdir, writeFile, rm } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
-import { PRICING_VERSION } from '@aiusage/shared';
+import { calculateCost, PRICING_VERSION } from '@aiusage/shared';
 import { scanCodex } from '../codex.js';
 
 // Helper to write a JSONL session file
@@ -99,6 +99,30 @@ describe('Fix 1: non-cached input cost formula', () => {
     const results = await scanCodex(day, tmpDir);
     expect(results[0].inputTokens).toBe(0); // 5000 - 5000, no negative
     expect(results[0].cachedInputTokens).toBe(5000);
+  });
+
+  it('splits reasoning from inclusive Codex output without changing output cost', async () => {
+    const day = '2026-09-05';
+    const sessionDir = join(tmpDir, 'sessions', '2026', '09', '05');
+    const events = tokenCountEvent(
+      `${day}T10:00:00.000Z`,
+      { input: 10_000, cached: 8_000, output: 500, reasoning: 200 },
+      { input: 10_000, cached: 8_000, output: 500, reasoning: 200 },
+      'gpt-6-astra',
+    );
+    await writeSession(sessionDir, 'rollout-test.jsonl', events);
+
+    const [result] = await scanCodex(day, tmpDir);
+    const expectedCost = calculateCost('openai', 'codex', 'gpt-6-astra', {
+      inputTokens: 2_000,
+      cachedInputTokens: 8_000,
+      cacheWriteTokens: 0,
+      outputTokens: 500,
+    });
+    expect(result.outputTokens).toBe(300);
+    expect(result.reasoningOutputTokens).toBe(200);
+    expect(result.outputTokens + result.reasoningOutputTokens).toBe(500);
+    expect(result.costUSD).toBeCloseTo(expectedCost.estimatedCostUsd, 8);
   });
 
   it('carves cache writes out of uncached input and preserves their cost', async () => {

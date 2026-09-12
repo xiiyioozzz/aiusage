@@ -7,6 +7,7 @@ import { getScheduleStatus } from './schedule.js';
 import { resolveKimiCodeHome } from './scanners/kimi.js';
 import { resolveTraeNativeCacheDir, resolveTokscaleTraeCacheDir } from './scanners/trae.js';
 import { detectOpenCodeSqliteRuntime, resolveOpenCodeSources } from './scanners/opencode.js';
+import { discoverClaudeProjectDirs } from './scanners/claude.js';
 import type { Lang } from './i18n.js';
 
 export interface Check {
@@ -36,6 +37,7 @@ const msgs = {
     notInstalled: 'Not installed',
     installedNoData: 'Installed, no usage data yet',
     hasData: (n: number) => `${n} session${n > 1 ? 's' : ''} found`,
+    hasDataInDirs: (n: number, dirs: number) => `${n} session${n > 1 ? 's' : ''} found across ${dirs} data director${dirs === 1 ? 'y' : 'ies'}`,
     openCodeData: (dbs: number, legacy: number) => `${dbs} database(s), ${legacy} legacy message(s) found`,
     openCodeSqliteUnavailable: 'Database found, but this Node version requires the system sqlite3 executable',
     schedule: 'Schedule',
@@ -62,6 +64,7 @@ const msgs = {
     notInstalled: '未安装',
     installedNoData: '已安装，暂无使用数据',
     hasData: (n: number) => `发现 ${n} 个会话`,
+    hasDataInDirs: (n: number, dirs: number) => `在 ${dirs} 个数据目录中发现 ${n} 个会话`,
     openCodeData: (dbs: number, legacy: number) => `发现 ${dbs} 个数据库、${legacy} 条旧版消息`,
     openCodeSqliteUnavailable: '已发现数据库，但当前 Node 版本需要安装系统 sqlite3 才能读取',
     schedule: '定时同步',
@@ -157,8 +160,9 @@ export async function runDoctor(lang: Lang = 'zh'): Promise<Check[]> {
   // 工具检测
   const g3 = s.groupTools;
   const home = homedir();
+  const claudeProjectDirs = await discoverClaudeProjectDirs();
   const tools: ToolDef[] = [
-    { dirs: [join(home, '.config', 'claude', 'projects'), join(home, '.claude', 'projects')], label: 'Claude Code', exts: ['.jsonl'] },
+    { dirs: claudeProjectDirs, label: 'Claude Code', exts: ['.jsonl'] },
     { dirs: [join(home, '.codex')], label: 'Codex CLI', exts: ['.jsonl'] },
     { dirs: [join(home, 'Library', 'Application Support', 'Cursor', 'User', 'globalStorage')], label: 'Cursor', exts: ['.vscdb'] },
     { dirs: [join(home, '.copilot', 'session-state'), join(home, '.copilot', 'otel')], label: 'Copilot CLI', exts: ['.jsonl'] },
@@ -183,11 +187,13 @@ export async function runDoctor(lang: Lang = 'zh'): Promise<Check[]> {
 
   for (const tool of tools) {
     let installed = false;
+    let installedDirs = 0;
     let n = 0;
     for (const dir of tool.dirs) {
       try {
         await stat(dir);
         installed = true;
+        installedDirs++;
         n += await countFiles(dir, tool.exts);
       } catch {
         // 检查同一工具的其他兼容目录。
@@ -198,7 +204,12 @@ export async function runDoctor(lang: Lang = 'zh'): Promise<Check[]> {
       continue;
     }
     if (n > 0) {
-      checks.push({ group: g3, name: tool.label, status: 'ok', message: s.hasData(n) });
+      checks.push({
+        group: g3,
+        name: tool.label,
+        status: 'ok',
+        message: tool.label === 'Claude Code' ? s.hasDataInDirs(n, installedDirs) : s.hasData(n),
+      });
     } else {
       checks.push({ group: g3, name: tool.label, status: 'warn', message: s.installedNoData });
     }

@@ -262,8 +262,10 @@ async function processCodexFile(
       const cachedInput = Math.min(tokens.cached, tokens.input);
       const cacheWriteInput = Math.min(tokens.cacheWrite, Math.max(tokens.input - cachedInput, 0));
       const nonCachedInput = Math.max(tokens.input - cachedInput - cacheWriteInput, 0);
-      const output = tokens.output;
-      const reasoning = tokens.reasoning;
+      // Codex output_tokens already includes reasoning_output_tokens. Store the
+      // two components without overlap so reports can safely add them together.
+      const reasoning = Math.min(tokens.reasoning, tokens.output);
+      const output = Math.max(tokens.output - reasoning, 0);
       if (nonCachedInput + cachedInput + cacheWriteInput + output + reasoning === 0) continue;
       state.previousTotals = nextTotals;
 
@@ -278,7 +280,9 @@ async function processCodexFile(
         inputTokens: nonCachedInput,
         cachedInputTokens: cachedInput,
         cacheWriteTokens: cacheWriteInput,
-        outputTokens: output,
+        // Reasoning is billed at the output rate, so pricing still uses the
+        // inclusive raw Codex output total.
+        outputTokens: tokens.output,
       });
       const exactEventCost = eventCost.costStatus === 'exact' ? eventCost.estimatedCostUsd : undefined;
       events.push({

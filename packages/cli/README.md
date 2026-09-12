@@ -18,7 +18,7 @@ differ, rather than treating every local record as billable token usage.
 
 | Tool | Sources and compatibility behavior |
 |------|------------------------------------|
-| Claude Code | `~/.config/claude/projects/` and `~/.claude/projects/` JSONL; deduplicates parent/sidechain replays, merges streaming snapshots per token field, and honors wrapper providers. Aggregate `stats-cache.json` is intentionally not converted into guessed per-message usage. |
+| Claude Code | JSONL from `~/.config/claude/projects/`, `~/.claude/projects/`, `CLAUDE_CONFIG_DIR`, `~/.claude-*` profiles, and Claude Desktop Cowork session roots; deduplicates parent/sidechain replays, merges streaming snapshots per token field, and honors wrapper providers. Aggregate `stats-cache.json` is intentionally not converted into guessed per-message usage. |
 | Codex CLI | Active and archived `~/.codex` sessions; fork-aware replay boundaries, inherited baselines, `last_token_usage`, and total-delta fallback. |
 | Cursor | Reads the local `state.vscdb` credential and requests Cursor's token-strategy usage CSV; the database is snapshotted when locked. |
 | Copilot CLI | OpenTelemetry JSONL under `~/.copilot/otel/` plus `session-state` shutdown totals; granular inference spans supersede same-trace aggregates. |
@@ -92,7 +92,7 @@ aiusage report --no-emoji               # disable emoji in title
 aiusage report --json                   # JSON output
 ```
 
-Reads data from local tool data directories including `~/.claude/projects` (Claude Code), `~/.codex` (Codex), Cursor local state plus usage export, VS Code Copilot Chat logs, and `~/.gemini/antigravity` (Antigravity).
+Reads data from local tool data directories including Claude Code and Desktop Cowork session roots, `~/.codex` (Codex), Cursor local state plus usage export, VS Code Copilot Chat logs, and `~/.gemini/antigravity` (Antigravity).
 
 **Compact mode** (default) shows Sources and Daily tables with merged Cache column and 2-decimal cost. **Detail mode** (`--detail`) expands all columns (CacheRead, CacheWrite, Reasoning), adds Top Models and Pricing Notes sections, and shows 4-decimal cost.
 

@@ -7,7 +7,7 @@ export function getStoredLocale(): Locale {
 
 export const I18N = {
   en: {
-    estimatedCost: 'Estimated Cost', totalTokens: 'Total Tokens',
+    estimatedCost: 'Estimated Cost', totalTokens: 'Processed Tokens',
     inputTokens: 'Input Tokens', outputTokens: 'Output Tokens',
     cachedTokens: 'Cached Tokens', activeDays: 'Active Days',
     sessions: 'Sessions', totalEvents: 'Total Events', userMessages: 'User Messages',
@@ -55,7 +55,7 @@ export const I18N = {
     total: 'Total',
   },
   zh: {
-    estimatedCost: '预估费用', totalTokens: '总 Token',
+    estimatedCost: '预估费用', totalTokens: '处理 Token',
     inputTokens: '输入 Token', outputTokens: '输出 Token',
     cachedTokens: '缓存 Token', activeDays: '活跃天数',
     sessions: '会话数', totalEvents: '总事件数', userMessages: '用户对话数',
