@@ -263,12 +263,21 @@ function WidgetRenderer({
       }));
 
       const centerLabel = formatUsd(overview?.totalCostUsd ?? 0, currency);
+      const modelTokenTotal = modelData.reduce((sum, m) => sum + Number(m.totalTokens || 0), 0);
       const colors = getChartColors(isDark);
 
       const sections = [
-        { idx: 0, title: t.providerShare, data: providerData, colors },
-        { idx: 1, title: t.modelShare, data: modelData, colors },
-        { idx: 2, title: t.deviceShare, data: deviceData, colors },
+        { idx: 0, title: t.providerShare, data: providerData, colors, centerLabel, metric: 'cost' as const },
+        {
+          idx: 1,
+          title: t.modelShare,
+          data: modelData,
+          colors,
+          centerLabel: formatCompact(modelTokenTotal),
+          metric: 'tokens' as const,
+          formatValue: (value: number) => formatCompact(value),
+        },
+        { idx: 2, title: t.deviceShare, data: deviceData, colors, centerLabel, metric: 'cost' as const },
       ];
 
       const visible = items ? sections.filter((s) => items.includes(s.idx)) : sections;
@@ -287,8 +296,10 @@ function WidgetRenderer({
                 title={sec.title}
                 data={sec.data}
                 colors={sec.colors}
-                centerLabel={centerLabel}
+                centerLabel={sec.centerLabel}
                 currency={currency}
+                metric={sec.metric}
+                formatValue={sec.formatValue}
               />
             </div>
           ))}

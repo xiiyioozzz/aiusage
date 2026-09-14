@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState, useCallback } from 'react';
 import {
-  RotateCw, Github, Heart, Sun, Moon, Monitor,
+  RotateCw, Sun, Moon, Monitor,
   ChevronDown, Check, BrainCircuit,
 } from 'lucide-react';
 import type { Locale, T } from './i18n';
@@ -25,9 +25,9 @@ import { FlowChart } from './components/flow-chart';
 import { DonutSection } from './components/donut-section';
 import { ActivityHeatmap } from './components/activity-heatmap';
 import { buildActivityHeatmapData } from './utils/activity-heatmap-data';
-import { HeaderLogo, FooterLogo, useFaviconFromLogo } from './components/site-logo';
+import { HeaderLogo, useFaviconFromLogo } from './components/site-logo';
+import { SiteFooter } from './components/site-footer';
 import { SITE_TITLE } from './site-config';
-import codexIcon from '@lobehub/icons-static-svg/icons/codex-color.svg?url';
 import claudeCodeIcon from '@lobehub/icons-static-svg/icons/claudecode-color.svg?url';
 import claudeIcon from '@lobehub/icons-static-svg/icons/claude-color.svg?url';
 import anthropicIcon from '@lobehub/icons-static-svg/icons/anthropic.svg?url';
@@ -44,8 +44,11 @@ import openrouterIcon from '@lobehub/icons-static-svg/icons/openrouter-color.svg
 import antigravityIcon from '@lobehub/icons-static-svg/icons/antigravity-color.svg?url';
 import ampIcon from '@lobehub/icons-static-svg/icons/amp-color.svg?url';
 import cursorIcon from '@lobehub/icons-static-svg/icons/cursor.svg?url';
+import kiroIcon from '@lobehub/icons-static-svg/icons/kiro-color.svg?url';
+import grokIcon from '@lobehub/icons-static-svg/icons/grok.svg?url';
 import opencodeIcon from '@lobehub/icons-static-svg/icons/opencode.svg?url';
 import moonshotIcon from '@lobehub/icons-static-svg/icons/moonshot.svg?url';
+import hermesIcon from './assets/hermes.svg?url';
 
 // ────────────────────────────────────────
 // Constants
@@ -86,7 +89,8 @@ const componentIcon = (Icon: typeof BrainCircuit): FilterIconAsset => ({ Icon, t
 function productIcon(value: string): FilterIconAsset | undefined {
   const id = value.toLowerCase();
   if (id.includes('claude')) return colorIcon(claudeCodeIcon);
-  if (id.includes('codex')) return colorIcon(codexIcon);
+  if (id.includes('codex')) return monoIcon(openaiIcon);
+  if (id.includes('hermes')) return colorIcon(hermesIcon);
   if (id.includes('gemini')) return colorIcon(geminiCliIcon);
   if (id.includes('kimi')) return monoIcon(kimiIcon);
   if (id.includes('copilot')) return monoIcon(copilotIcon);
@@ -95,8 +99,31 @@ function productIcon(value: string): FilterIconAsset | undefined {
   if (id.includes('antigravity')) return colorIcon(antigravityIcon);
   if (id.includes('amp')) return colorIcon(ampIcon);
   if (id.includes('cursor')) return monoIcon(cursorIcon);
+  if (id.includes('kiro')) return colorIcon(kiroIcon);
   if (id.includes('opencode')) return monoIcon(opencodeIcon);
   return undefined;
+}
+
+function providerIcon(value: string): FilterIconAsset | undefined {
+  const id = value.toLowerCase();
+  if (id.includes('hermes')) return colorIcon(hermesIcon);
+  if (id.includes('kiro')) return colorIcon(kiroIcon);
+  if (id.includes('cursor')) return monoIcon(cursorIcon);
+  if (id.includes('anthropic')) return monoIcon(anthropicIcon);
+  if (id.includes('openai')) return monoIcon(openaiIcon);
+  if (id.includes('google')) return colorIcon(geminiIcon);
+  if (id.includes('deepseek')) return colorIcon(deepseekIcon);
+  if (id.includes('moonshot')) return monoIcon(moonshotIcon);
+  if (id.includes('alibaba')) return colorIcon(qwenIcon);
+  if (id.includes('zhipu')) return colorIcon(glmvIcon);
+  if (id.includes('xai')) return monoIcon(grokIcon);
+  if (id.includes('github')) return monoIcon(copilotIcon);
+  return undefined;
+}
+
+function iconSrc(icon: FilterIconAsset | undefined): string | undefined {
+  if (!icon || icon.tone === 'component') return undefined;
+  return icon.src;
 }
 
 function modelIcon(value: string, label: string): FilterIconAsset {
@@ -112,6 +139,8 @@ function modelIcon(value: string, label: string): FilterIconAsset {
   if (id.includes('qwen') || id.includes('通义')) return colorIcon(qwenIcon);
   if (id.includes('copilot')) return monoIcon(copilotIcon);
   if (id.includes('trae')) return colorIcon(traeIcon);
+  if (id.includes('composer') || id.includes('cursor')) return monoIcon(cursorIcon);
+  if (id.includes('grok') || id.includes('xai')) return monoIcon(grokIcon);
   if (id.includes('gpt') || /\bo\d/.test(id) || id.includes('openai')) return monoIcon(openaiIcon);
   return componentIcon(BrainCircuit);
 }
@@ -740,13 +769,17 @@ export function App() {
                       }))}
                       colors={getChartColors(isDark)}
                       centerLabel={formatUsd(overview?.totalCostUsd ?? 0)}
+                      getIconSrc={(item) => iconSrc(providerIcon(item.value))}
                     />
                     <div className="my-5 border-t border-slate-100 dark:border-white/[0.08]" />
                     <DonutSection
                       title={t.modelShare}
+                      metric="tokens"
                       data={(overview?.modelCostShare ?? []).map((m) => ({ ...m, label: formatModelName(m.label, isMobile) }))}
                       colors={getChartColors(isDark)}
-                      centerLabel={formatUsd(overview?.totalCostUsd ?? 0)}
+                      centerLabel={formatCompact((overview?.modelCostShare ?? []).reduce((sum, m) => sum + Number(m.totalTokens || 0), 0), locale)}
+                      formatValue={(value) => formatCompact(value, locale)}
+                      getIconSrc={(item) => iconSrc(modelIcon(item.value, item.label))}
                     />
                     <div className="my-5 border-t border-slate-100 dark:border-white/[0.08]" />
                     <DonutSection
@@ -769,56 +802,7 @@ export function App() {
         </div>
       )}
 
-      {/* ── Footer ── */}
-      <footer className="fade-up mt-16 border-t border-slate-100 dark:border-white/[0.08] pb-10 pt-8">
-        <div className="flex flex-col items-center gap-4">
-          <div className="flex items-center gap-3 text-[12px] text-slate-400 dark:text-slate-500">
-            <span className="flex items-center gap-1.5 font-medium text-slate-500 dark:text-slate-400">
-              <FooterLogo />
-              {SITE_TITLE}
-            </span>
-            {health?.version && (
-              <span className="rounded-full bg-slate-100 dark:bg-[#1a1a1a] px-2 py-0.5 text-[10px] font-medium text-slate-400 dark:text-slate-500">
-                v{health.version}
-              </span>
-            )}
-          </div>
-          <div className="flex flex-wrap justify-center gap-x-4 gap-y-2 text-[11px] text-slate-300 dark:text-slate-600">
-            <div className="flex items-center gap-4">
-              <a
-                href="/embed/docs"
-                className="text-slate-400 transition-colors hover:text-slate-600 dark:text-slate-500 dark:hover:text-slate-300"
-              >
-                {t.embedWidgets}
-              </a>
-            </div>
-            <div className="flex items-center gap-4">
-              <a
-                href="https://github.com/imetn/aiusage"
-                target="_blank"
-                rel="noopener noreferrer"
-                className="flex items-center gap-1.5 text-slate-400 transition-colors hover:text-slate-600 dark:text-slate-500 dark:hover:text-slate-300"
-              >
-                <Github className="h-3.5 w-3.5" />
-                <span>GitHub</span>
-              </a>
-              <span className="h-3 w-px bg-slate-200 dark:bg-[#222222]" />
-              <span className="flex items-center gap-1">
-                Made with <Heart className="h-3 w-3 fill-red-300 text-red-300" /> by{' '}
-                <a
-                  href="https://x.com/qingnianxiaozhe"
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="flex items-center gap-1 text-slate-400 transition-colors hover:text-slate-600 dark:text-slate-500 dark:hover:text-slate-300"
-                >
-                  <svg className="h-3 w-3" viewBox="0 0 24 24" fill="currentColor"><path d="M18.244 2.25h3.308l-7.227 8.26 8.502 11.24H16.17l-5.214-6.817L4.99 21.75H1.68l7.73-8.835L1.254 2.25H8.08l4.713 6.231zm-1.161 17.52h1.833L7.084 4.126H5.117z" /></svg>
-                  qingnianxiaozhe
-                </a>
-              </span>
-            </div>
-          </div>
-        </div>
-      </footer>
+      <SiteFooter t={t} version={health?.version} />
     </main>
   );
 }

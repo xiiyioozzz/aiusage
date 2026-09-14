@@ -9,7 +9,7 @@ await build({
   format: 'esm',
   outfile: 'dist/cli.js',
   banner: { js: '#!/usr/bin/env node' },
-  external: ['ws'],
+  external: ['ws', 'node:sqlite'],
   minifySyntax: true,
   treeShaking: true,
 });

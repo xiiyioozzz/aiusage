@@ -53,7 +53,7 @@ export async function resolvePricingCatalog(
   const ttlHours = config.pricing?.cacheTtlHours ?? DEFAULT_CACHE_TTL_HOURS;
 
   if (!options.forceRefresh && cache && (mode === 'manual' || mode === 'offline' || isCacheFresh(cache, ttlHours))) {
-    return fromCache(cache);
+    return preferBundledIfRicher(fromCache(cache));
   }
 
   if ((mode !== 'offline' || options.forceRefresh) && (mode === 'auto' || options.forceRefresh)) {
@@ -63,17 +63,17 @@ export async function resolvePricingCatalog(
         const catalog = await fetchPricingCatalog(url);
         const fetchedAt = new Date().toISOString();
         await writePricingCache({ fetchedAt, sourceUrl: url, catalog });
-        return {
+        return preferBundledIfRicher({
           catalog,
           info: { source: 'remote', version: catalog.version, url, fetchedAt },
-        };
+        });
       } catch {
         // Try the next source; report/sync must not fail just because pricing refresh failed.
       }
     }
   }
 
-  if (cache) return fromCache(cache);
+  if (cache) return preferBundledIfRicher(fromCache(cache));
 
   return {
     catalog: bundledCatalog,
@@ -133,6 +133,16 @@ function isCacheFresh(cache: PricingCacheFile, ttlHours: number): boolean {
   const fetched = new Date(cache.fetchedAt).getTime();
   if (!Number.isFinite(fetched)) return false;
   return Date.now() - fetched < ttlHours * 60 * 60 * 1000;
+}
+
+function preferBundledIfRicher(resolved: ResolvedPricingCatalog): ResolvedPricingCatalog {
+  const remoteProviders = new Set(Object.keys(resolved.catalog.providers ?? {}));
+  const bundledRicher = Object.keys(bundledCatalog.providers).some((name) => !remoteProviders.has(name));
+  if (!bundledRicher) return resolved;
+  return {
+    catalog: bundledCatalog,
+    info: { source: 'bundled', version: bundledCatalog.version },
+  };
 }
 
 function fromCache(cache: PricingCacheFile): ResolvedPricingCatalog {

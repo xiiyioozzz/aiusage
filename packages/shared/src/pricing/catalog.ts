@@ -8,9 +8,10 @@ import { deepseek } from './data/deepseek.js';
 import { zhipu } from './data/zhipu.js';
 import { github } from './data/github.js';
 import { sourcegraph } from './data/sourcegraph.js';
-import { inflection, cursor, droid, opencode } from './data/placeholders.js';
+import { inflection, cursor, droid, opencode, kiro, hermes } from './data/placeholders.js';
+import { xai } from './data/xai.js';
 
-export const PRICING_VERSION = '2026-09-05-gpt-6-fable-5-1-v1';
+export const PRICING_VERSION = '2026-09-15-cursor-hermes-list-v1';
 
 /**
  * 模型别名（精确匹配优先于前缀回退）。
@@ -25,6 +26,13 @@ const aliases: Record<string, string> = {
   'claude-opus-4-6-20250301': 'claude-opus-4-6',
   'claude-haiku-4-5-20251001': 'claude-haiku-4-5',
   'claude-sonnet-4.6': 'claude-sonnet-4-6',
+  'claude-sonnet-4-8': 'claude-sonnet-4-6',
+  'claude-sonnet-4.8': 'claude-sonnet-4-6',
+  'claude-opus-4.8': 'claude-opus-4-8',
+  'claude-opus-4.7': 'claude-opus-4-7',
+  'claude-opus-4.6': 'claude-opus-4-6',
+  'claude-opus-4.5': 'claude-opus-4-5',
+  'claude-opus-4-5-20251101': 'claude-opus-4-5',
   'gpt-5.6': 'gpt-5.6-sol',
   'codex-auto-review': 'gpt-5.4',
   'k3': 'kimi-k3',
@@ -50,6 +58,9 @@ export const catalog: PricingCatalog = {
     sourcegraph,
     inflection,
     cursor,
+    kiro,
+    hermes,
+    xai,
     droid,
     opencode,
   },

@@ -36,7 +36,7 @@ export async function fileModifiedTs(filePath: string): Promise<Date | null> {
 /** 根据模型名推断底层供应商；无法识别时保留调用方指定的产品供应商。 */
 export function inferProviderFromModel(model: string, fallback: string): string {
   const value = model.trim().toLowerCase();
-  if (/^(claude|opus|sonnet|haiku)(?:[-.]|$)/.test(value)) return 'anthropic';
+  if (/^(claude|opus|sonnet|haiku|fable|mythos)(?:[-.]|$)/.test(value)) return 'anthropic';
   if (/^(gpt|chatgpt|codex|o[134])(?:[-.]|$)/.test(value)) return 'openai';
   if (/^gemini(?:[-.]|$)/.test(value)) return 'google';
   if (/^qwen(?:[-.]|$)/.test(value)) return 'alibaba';
@@ -103,10 +103,12 @@ export function accumulate(
   key: string,
   base: Omit<IngestBreakdown, 'eventCount'>,
   tokens: { input: number; cached: number; cacheWrite: number; output: number; reasoning: number },
+  events = 1,
 ): void {
+  const eventCount = Math.max(1, Math.round(events));
   const existing = grouped.get(key);
   if (existing) {
-    existing.eventCount += 1;
+    existing.eventCount += eventCount;
     existing.inputTokens += tokens.input;
     existing.cachedInputTokens += tokens.cached;
     existing.cacheWriteTokens += tokens.cacheWrite;
@@ -115,7 +117,7 @@ export function accumulate(
   } else {
     grouped.set(key, {
       ...base,
-      eventCount: 1,
+      eventCount,
       inputTokens: tokens.input,
       cachedInputTokens: tokens.cached,
       cacheWriteTokens: tokens.cacheWrite,

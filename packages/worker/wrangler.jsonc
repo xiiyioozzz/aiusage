@@ -36,7 +36,7 @@
   // - PROJECT_NAME_SALT
   "vars": {
     "MAX_DEVICES": "10",
-    "PUBLIC_PROJECT_VISIBILITY": "masked",
+    "PUBLIC_PROJECT_VISIBILITY": "plain",
     "DEFAULT_TIMEZONE": "Asia/Shanghai"
   }
 }

@@ -78,7 +78,7 @@ function makeFacetLabel(kind: 'provider' | 'product' | 'channel', value: string)
   if (kind === 'product') {
     return ({
       'claude-code': 'Claude Code',
-      codex: 'Codex',
+      codex: 'ChatGPT',
       'copilot-cli': 'Copilot CLI',
       'copilot-vscode': 'Copilot VS Code',
       'gemini-cli': 'Gemini CLI',

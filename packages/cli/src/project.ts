@@ -1,8 +1,9 @@
 import { open, readdir, readFile } from 'node:fs/promises';
-import { basename, join } from 'node:path';
+import { basename, join, sep } from 'node:path';
 import { homedir } from 'node:os';
 import { resolveKimiCodeHome } from './scanners/kimi.js';
 import { resolveTraeNativeCacheDir } from './scanners/trae.js';
+import { discoverHermesProjects } from './scanners/hermes.js';
 
 export interface DiscoveredProject {
   /** 原始项目名（目录 basename） */
@@ -61,9 +62,15 @@ export async function discoverProjects(
 
     // Trae CN: privacy-minimized cache written by `aiusage trae sync`.
     discoverTraeProjects().then(names => names.forEach(n => add(n, 'trae'))),
+
+    // Kiro IDE: ~/.kiro/sessions/{workspace}/sess_*/session.json
+    discoverKiroProjects().then(names => names.forEach(n => add(n, 'kiro'))),
+
+    // Hermes Agent: ~/.hermes/state.db session cwd / git_repo_root
+    discoverHermesProjects().then(names => names.forEach(n => add(n, 'hermes'))),
   ]);
 
-  // ���建结果
+  // 汇总结果
   const results: DiscoveredProject[] = [];
   for (const [name, sources] of projectMap) {
     const alias = projectAliases?.[name];
@@ -267,7 +274,9 @@ async function discoverGeminiProjects(): Promise<string[]> {
 }
 
 async function discoverCursorProjects(): Promise<string[]> {
-  const storagePath = join(homedir(), 'Library', 'Application Support', 'Cursor', 'User', 'globalStorage', 'storage.json');
+  const projects = new Set<string>();
+  const cursorRoot = join(homedir(), 'Library', 'Application Support', 'Cursor');
+  const storagePath = join(cursorRoot, 'User', 'globalStorage', 'storage.json');
   try {
     const raw = await readFile(storagePath, 'utf-8');
     const data = JSON.parse(raw) as {
@@ -275,7 +284,6 @@ async function discoverCursorProjects(): Promise<string[]> {
       backupWorkspaces?: { folders?: Array<{ folderUri?: string }> };
     };
 
-    const projects = new Set<string>();
     const workspaceUris = Object.keys(data.profileAssociations?.workspaces ?? {});
     for (const uri of workspaceUris) {
       const name = nameFromFileUri(uri);
@@ -286,11 +294,28 @@ async function discoverCursorProjects(): Promise<string[]> {
       const name = nameFromFileUri(folder.folderUri);
       if (name) projects.add(name);
     }
-
-    return [...projects];
   } catch {
-    return [];
+    // storage.json 不是唯一来源
   }
+
+  const wsRoot = join(cursorRoot, 'User', 'workspaceStorage');
+  try {
+    const entries = await readdir(wsRoot, { withFileTypes: true });
+    await Promise.all(entries.map(async entry => {
+      if (!entry.isDirectory()) return;
+      try {
+        const raw = JSON.parse(await readFile(join(wsRoot, entry.name, 'workspace.json'), 'utf8')) as { folder?: string };
+        const name = nameFromFileUri(raw.folder);
+        if (name) projects.add(name);
+      } catch {
+        // ignore missing/malformed workspace metadata
+      }
+    }));
+  } catch {
+    // no workspaceStorage
+  }
+
+  return [...projects];
 }
 
 async function discoverCopilotVscodeProjects(): Promise<string[]> {
@@ -388,6 +413,25 @@ async function discoverKimiProjects(): Promise<string[]> {
     }
   }
 
+  return [...projects];
+}
+
+async function discoverKiroProjects(): Promise<string[]> {
+  const projects = new Set<string>();
+  const sessionsDir = join(homedir(), '.kiro', 'sessions');
+  for (const filePath of await walkFiles(sessionsDir, '.json')) {
+    if (basename(filePath) !== 'session.json') continue;
+    if (filePath.includes(`${sep}snapshots${sep}`)) continue;
+    try {
+      const data = JSON.parse(await readFile(filePath, 'utf8')) as { workspacePaths?: string[] };
+      for (const workspace of data.workspacePaths ?? []) {
+        const name = basename(workspace.trim());
+        if (name && name !== 'unknown') projects.add(name);
+      }
+    } catch {
+      continue;
+    }
+  }
   return [...projects];
 }
 

@@ -1,9 +1,24 @@
 import { useState, useRef } from "react";
 import { Cell, Pie, PieChart, ResponsiveContainer } from "recharts";
 import { ChartContainer } from "./ui/chart";
-import { formatUsd, formatUsdFull, arrSum, foldItems } from "../utils/format";
+import { formatUsd, formatUsdFull, arrSum } from "../utils/format";
+
 import { EmptyState } from "./chart-helpers";
 import type { CurrencyMode } from "../hooks/use-cny-rate";
+
+function foldSliceItems<T extends { slice: number; label: string; value: string }>(
+    items: T[],
+    limit: number,
+): T[] {
+    if (items.length <= limit) return items;
+    const head = items.slice(0, limit - 1);
+    const tail = items.slice(limit - 1);
+    const other = tail.reduce(
+        (acc, it) => ({ ...acc, slice: acc.slice + Number(it.slice || 0) }),
+        { ...tail[0], value: 'other', label: 'Other', slice: 0 },
+    );
+    return [...head, other];
+}
 
 export function ProviderBars({
     data,
@@ -43,16 +58,27 @@ export function DonutSection({
     colors,
     centerLabel,
     currency = 'auto',
+    metric = 'cost',
+    formatValue,
+    getIconSrc,
 }: {
     title: string;
-    data: Array<{ label: string; value: string; estimatedCostUsd: number; eventCount: number }>;
+    data: Array<{ label: string; value: string; estimatedCostUsd: number; eventCount: number; totalTokens?: number }>;
     colors: string[];
     centerLabel: string;
     currency?: CurrencyMode;
+    metric?: 'cost' | 'tokens';
+    formatValue?: (value: number) => string;
+    getIconSrc?: (item: { value: string; label: string }) => string | undefined;
 }) {
-    const sorted = [...data].sort((a, b) => b.estimatedCostUsd - a.estimatedCostUsd);
-    const folded = foldItems(sorted, 6);
-    const total = arrSum(folded.map((d) => d.estimatedCostUsd));
+    const amount = (item: { estimatedCostUsd: number; totalTokens?: number }) =>
+      metric === 'tokens' ? Number(item.totalTokens || 0) : Number(item.estimatedCostUsd || 0);
+    const sorted = [...data]
+      .map((item) => ({ ...item, slice: amount(item) }))
+      .sort((a, b) => b.slice - a.slice);
+    const folded = foldSliceItems(sorted, 6);
+    const total = arrSum(folded.map((d) => d.slice));
+    const display = formatValue ?? ((value: number) => formatUsd(value, currency));
 
     const containerRef = useRef<HTMLDivElement>(null);
     const [tip, setTip] = useState<{ x: number; y: number; label: string; value: number } | null>(null);
@@ -79,7 +105,7 @@ export function DonutSection({
                             <PieChart>
                                 <Pie
                                     data={folded}
-                                    dataKey="estimatedCostUsd"
+                                    dataKey="slice"
                                     nameKey="label"
                                     innerRadius="62%"
                                     outerRadius="86%"
@@ -87,7 +113,7 @@ export function DonutSection({
                                     stroke="none"
                                     onMouseEnter={(_, idx) => {
                                         const item = folded[idx];
-                                        if (item) setTip({ x: 0, y: 0, label: item.label, value: item.estimatedCostUsd });
+                                        if (item) setTip({ x: 0, y: 0, label: item.label, value: item.slice });
                                     }}
                                     onMouseLeave={() => setTip(null)}
                                 >
@@ -109,7 +135,7 @@ export function DonutSection({
                             style={{ left: tip.x, top: tip.y }}
                         >
                             <div className="text-[11px] text-slate-500 dark:text-slate-400">{tip.label}</div>
-                            <div className="mt-1 text-[11px] font-semibold tabular-nums text-slate-950 dark:text-slate-300">{formatUsdFull(tip.value, currency)}</div>
+                            <div className="mt-1 text-[11px] font-semibold tabular-nums text-slate-950 dark:text-slate-300">{formatValue ? formatValue(tip.value) : formatUsdFull(tip.value, currency)}</div>
                         </div>
                     )}
                 </div>
@@ -117,13 +143,18 @@ export function DonutSection({
                 {/* Legend */}
                 <div className="grid min-w-0 gap-y-2 text-[11px]" style={{ gridTemplateColumns: "minmax(0,1fr) 10px auto auto", columnGap: "10px" }}>
                     {folded.map((item, i) => {
-                        const pct = total > 0 ? (item.estimatedCostUsd / total) * 100 : 0;
+                        const pct = total > 0 ? (item.slice / total) * 100 : 0;
                         return (
                             <div key={item.value} className="col-span-4 grid grid-cols-subgrid items-center">
-                                <span className="truncate text-right text-slate-500 dark:text-slate-400">{item.label}</span>
+                                <span className="flex min-w-0 items-center justify-end gap-1.5 text-slate-500 dark:text-slate-400">
+                                    {getIconSrc?.(item) && (
+                                        <img src={getIconSrc(item)} alt="" className="h-3.5 w-3.5 shrink-0 rounded-[2px]" />
+                                    )}
+                                    <span className="truncate">{item.label}</span>
+                                </span>
                                 <span className="h-[7px] w-[7px] rounded-full" style={{ backgroundColor: colors[i % colors.length] }} />
                                 <span className="text-right tabular-nums text-slate-400 dark:text-slate-500">{pct.toFixed(1)}%</span>
-                                <span className="text-right font-medium tabular-nums text-slate-900 dark:text-slate-300">{formatUsd(item.estimatedCostUsd, currency)}</span>
+                                <span className="text-right font-medium tabular-nums text-slate-900 dark:text-slate-300">{display(item.slice)}</span>
                             </div>
                         );
                     })}

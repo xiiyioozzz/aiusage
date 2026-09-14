@@ -196,11 +196,24 @@ describe('Claude data directory discovery', () => {
       '.claude',
       'projects',
     );
+    const cowork3pProjects = join(
+      homeDir,
+      'Library',
+      'Application Support',
+      'Claude-3p',
+      'local-agent-mode-sessions',
+      'session-b',
+      'run-b',
+      'local-b',
+      '.claude',
+      'projects',
+    );
     await Promise.all([
       mkdir(join(homeDir, '.claude', 'projects'), { recursive: true }),
       mkdir(profileProjects, { recursive: true }),
       mkdir(join(configuredRoot, 'projects'), { recursive: true }),
       mkdir(coworkProjects, { recursive: true }),
+      mkdir(cowork3pProjects, { recursive: true }),
     ]);
 
     const dirs = await discoverClaudeProjectDirs(undefined, {
@@ -215,6 +228,7 @@ describe('Claude data directory discovery', () => {
       join(configuredRoot, 'projects'),
       profileProjects,
       coworkProjects,
+      cowork3pProjects,
     ]));
     expect(new Set(dirs).size).toBe(dirs.length);
   });

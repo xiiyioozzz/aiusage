@@ -3,7 +3,7 @@
 `@aiusage/cli` 是 AIUsage 命令行工具，用于：
 
 - 发现和管理本机 AI 工具项目
-- 扫描本地 AI 编程工具的 Token 用量（Claude Code、Codex、Cursor、Copilot CLI、Copilot VS Code、Gemini CLI、Antigravity、Amp、Kimi Code、Qwen Code、Droid、OpenCode、Pi、Trae）
+- 扫描本地 AI 编程工具的 Token 用量（Claude Code、Codex、Cursor、Copilot CLI、Copilot VS Code、Gemini CLI、Antigravity、Amp、Kimi Code、Qwen Code、Droid、OpenCode、Pi、Trae、Kiro IDE / Kiro-Go / kiro.rs）
 - 通过 Anthropic Admin API 导入历史用量
 - 生成本地用量报告（最近 7 天、30 天、90 天、180 天或全部历史）
 - 定时自动同步数据到 AIUsage Worker
@@ -20,9 +20,18 @@ OpenCode 同时读取 XDG 数据目录中的全部 `opencode*.db`：兼容 v1 `m
 `XDG_DATA_HOME` 与 `OPENCODE_DB`。Node 22.13+ 使用内置只读 SQLite；更早的
 受支持 Node 版本回退系统 `sqlite3`。数据库位于其他自定义目录时可配置：
 
+Kiro 会同时扫 IDE 会话（`~/.kiro/sessions/`，按上下文占用和字符估算）以及
+Kiro-Go / kiro.rs 代理日志。Kiro-Go 读 `data/request_logs.json`（最近约 500
+条，token 多为合计值），kiro.rs 读 `usage_log.YYYY-MM-DD.jsonl`（含拆分
+input/output 与 cache）。费用按同一模型的公开 API 单价估算。默认目录包括
+`~/.kiro-go/data` 与 `~/.kiro.rs`，也可用环境变量 `KIRO_GO_DATA_DIR` /
+`KIRO_RS_DATA_DIR` 或配置项指定：
+
 ```bash
 aiusage config set scanner.opencodeDbPaths "/custom/opencode-next.db" "/custom/opencode-stable.db"
 aiusage config set scanner.opencodeDbPaths default  # 清除自定义路径
+aiusage config set scanner.kiroProxyDataDirs "/data/kiro-go" "/data/kiro-rs"
+aiusage config set scanner.kiroProxyDataDirs default  # 清除自定义路径
 ```
 
 Trae CN 通过 `aiusage trae sync --edition cn` 调用 Trae 自己的本地 `ai-agent`
@@ -239,6 +248,7 @@ aiusage config set device.alias "MacBook Pro 工作机"      # Dashboard 上显�
 aiusage config set privacy.projectVisibility masked     # hidden | masked | plain
 aiusage config set project.alias MyApp "我的应用"        # 推荐用 aiusage project alias
 aiusage config set scanner.opencodeDbPaths "/custom/opencode-next.db"  # 额外 OpenCode 数据库
+aiusage config set scanner.kiroProxyDataDirs "/data/kiro-go"           # 额外 Kiro-Go / kiro.rs 目录
 aiusage config set anthropic-admin-key sk-ant-admin...  # 用于 aiusage import
 ```
 

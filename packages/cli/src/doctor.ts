@@ -7,6 +7,7 @@ import { getScheduleStatus } from './schedule.js';
 import { resolveKimiCodeHome } from './scanners/kimi.js';
 import { resolveTraeNativeCacheDir, resolveTokscaleTraeCacheDir } from './scanners/trae.js';
 import { detectOpenCodeSqliteRuntime, resolveOpenCodeSources } from './scanners/opencode.js';
+import { listKiroProxyLogFiles } from './scanners/kiro-proxy.js';
 import { discoverClaudeProjectDirs } from './scanners/claude.js';
 import type { Lang } from './i18n.js';
 
@@ -163,8 +164,10 @@ export async function runDoctor(lang: Lang = 'zh'): Promise<Check[]> {
   const claudeProjectDirs = await discoverClaudeProjectDirs();
   const tools: ToolDef[] = [
     { dirs: claudeProjectDirs, label: 'Claude Code', exts: ['.jsonl'] },
-    { dirs: [join(home, '.codex')], label: 'Codex CLI', exts: ['.jsonl'] },
     { dirs: [join(home, 'Library', 'Application Support', 'Cursor', 'User', 'globalStorage')], label: 'Cursor', exts: ['.vscdb'] },
+    { dirs: [join(home, '.kiro', 'sessions')], label: 'Kiro', exts: ['.jsonl'] },
+    { dirs: [join(home, '.hermes')], label: 'Hermes', exts: ['.db'] },
+    { dirs: [join(home, '.codex')], label: 'ChatGPT / Codex CLI', exts: ['.jsonl'] },
     { dirs: [join(home, '.copilot', 'session-state'), join(home, '.copilot', 'otel')], label: 'Copilot CLI', exts: ['.jsonl'] },
     {
       dirs: [
@@ -184,6 +187,23 @@ export async function runDoctor(lang: Lang = 'zh'): Promise<Check[]> {
     { dirs: [join(home, '.pi', 'agent', 'sessions'), join(home, '.omp', 'agent', 'sessions')], label: 'Pi / OMP', exts: ['.jsonl'] },
     { dirs: [resolveTraeNativeCacheDir(home), resolveTokscaleTraeCacheDir(home)], label: 'Trae', exts: ['.json'] },
   ];
+
+  const kiroProxyFiles = await listKiroProxyLogFiles(config.scanner?.kiroProxyDataDirs, home);
+  if (kiroProxyFiles.length > 0) {
+    checks.push({
+      group: g3,
+      name: 'Kiro-Go / kiro.rs',
+      status: 'ok',
+      message: s.hasData(kiroProxyFiles.length),
+    });
+  } else if (config.scanner?.kiroProxyDataDirs?.length) {
+    checks.push({
+      group: g3,
+      name: 'Kiro-Go / kiro.rs',
+      status: 'warn',
+      message: s.installedNoData,
+    });
+  }
 
   for (const tool of tools) {
     let installed = false;

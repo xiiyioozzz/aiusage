@@ -228,6 +228,7 @@ The controller automatically detects and scans all installed tools:
 | Claude Code | Anthropic / compatible wrappers | `~/.config/claude/projects/`, `~/.claude/projects/`, `CLAUDE_CONFIG_DIR`, `~/.claude-*`, Claude Desktop Cowork session roots |
 | Codex CLI | OpenAI | `~/.codex/sessions/`, `~/.codex/archived_sessions/` |
 | Cursor | Cursor | Local `state.vscdb` credential + Cursor usage CSV API |
+| Kiro | Kiro / underlying model provider | IDE `~/.kiro/sessions/` (estimated); Kiro-Go `request_logs.json` and kiro.rs `usage_log.*.jsonl` (upstream tokens). Cost uses the same model's public API list price. |
 | Copilot CLI | GitHub | `~/.copilot/otel/`, `~/.copilot/session-state/` |
 | Copilot for VS Code | GitHub | VS Code logs and `User/workspaceStorage/**/chatSessions/*.{json,jsonl}` |
 | Gemini CLI | Google | `~/.gemini/tmp/` |

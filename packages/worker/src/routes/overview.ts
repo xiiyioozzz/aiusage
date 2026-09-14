@@ -142,16 +142,18 @@ export async function handleOverview(url: URL, env: Env): Promise<Response> {
       SELECT
         b.model AS value,
         COALESCE(SUM(b.estimated_cost_usd), 0) AS estimated_cost_usd,
-        COALESCE(SUM(b.event_count), 0) AS event_count
+        COALESCE(SUM(b.event_count), 0) AS event_count,
+        COALESCE(SUM(${TOTAL_TOKENS_SQL}), 0) AS total_tokens
       FROM daily_usage_breakdown b
       ${where.whereClause}
       GROUP BY b.model
       HAVING b.model IS NOT NULL AND b.model != ''
-      ORDER BY estimated_cost_usd DESC, value ASC
+      ORDER BY total_tokens DESC, estimated_cost_usd DESC, value ASC
     `).bind(...where.params).all<{
       value: string;
       estimated_cost_usd: number;
       event_count: number;
+      total_tokens: number;
     }>(),
     env.DB.prepare(`
       SELECT
@@ -250,6 +252,7 @@ export async function handleOverview(url: URL, env: Env): Promise<Response> {
       label: row.value,
       estimatedCostUsd: roundUsd(row.estimated_cost_usd ?? 0),
       eventCount: Number(row.event_count ?? 0),
+      totalTokens: Number(row.total_tokens ?? 0),
     })),
     channelCostShare: (channelRows.results ?? []).map(row => ({
       value: row.value,
@@ -376,7 +379,7 @@ async function loadFacetOptions(column: string, filters: DashboardFilters, env: 
     ${where.whereClause}
     GROUP BY ${columnExpr}
     HAVING value IS NOT NULL AND value != ''
-    ORDER BY estimated_cost_usd DESC, value ASC
+    ORDER BY estimated_cost_usd DESC, event_count DESC, value ASC
     LIMIT 80
   `).bind(...where.params).all<{
     value: string;
@@ -802,6 +805,10 @@ function productLabel(value: string, combined: boolean): string {
   if (value === 'trae-cn') return 'Trae CN';
   if (value === 'trae-intl') return 'Trae International';
   if (value === 'trae') return combined ? 'Trae (All)' : 'Trae (Legacy)';
+  if (value === 'codex') return 'ChatGPT';
+  if (value === 'hermes') return 'Hermes';
+  if (value === 'kiro') return 'Kiro';
+  if (value === 'cursor') return 'Cursor';
   return value;
 }
 

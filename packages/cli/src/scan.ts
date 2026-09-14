@@ -4,6 +4,8 @@ import { scanCodexDates } from './scanners/codex.js';
 import { scanCopilotDates } from './scanners/copilot.js';
 import { scanCopilotVscodeDates } from './scanners/copilot-vscode.js';
 import { scanCursorDates } from './scanners/cursor.js';
+import { scanKiroDates } from './scanners/kiro.js';
+import { scanHermesDates } from './scanners/hermes.js';
 import { scanGeminiDates } from './scanners/gemini.js';
 import { scanQwenDates } from './scanners/qwen.js';
 import { scanKimiDates } from './scanners/kimi.js';
@@ -31,6 +33,7 @@ export interface ScanResult {
 export interface ScanOptions {
   projectAliases?: Record<string, string>;
   opencodeDbPaths?: readonly string[];
+  kiroProxyDataDirs?: readonly string[];
   /** Product ids selected by the user-facing --tool filter. */
   tools?: readonly string[];
 }
@@ -45,7 +48,9 @@ export const TOOL_IDS = [
   'cursor',
   'droid',
   'gemini-cli',
+  'hermes',
   'kimi-code',
+  'kiro',
   'opencode',
   'pi',
   'qwen-code',
@@ -106,6 +111,8 @@ export async function scanDates(targetDates: string[], options: ScanOptions = {}
     { products: ['copilot-cli'], scan: () => scanCopilotDates(uniqueDates, undefined, options.projectAliases) },
     { products: ['copilot-vscode'], scan: () => scanCopilotVscodeDates(uniqueDates, undefined, options.projectAliases) },
     { products: ['cursor'], scan: () => scanCursorDates(uniqueDates) },
+    { products: ['kiro'], scan: () => scanKiroDates(uniqueDates, undefined, options.projectAliases, { proxyDataDirs: options.kiroProxyDataDirs }) },
+    { products: ['hermes'], scan: () => scanHermesDates(uniqueDates, { projectAliases: options.projectAliases }) },
     { products: ['gemini-cli'], scan: () => scanGeminiDates(uniqueDates, undefined, options.projectAliases) },
     { products: ['qwen-code'], scan: () => scanQwenDates(uniqueDates, undefined, options.projectAliases) },
     { products: ['kimi-code'], scan: () => scanKimiDates(uniqueDates, undefined, options.projectAliases) },

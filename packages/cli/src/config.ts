@@ -33,6 +33,8 @@ export interface AIUsageConfig {
   scanner?: {
     /** Extra OpenCode databases outside XDG_DATA_HOME/opencode. */
     opencodeDbPaths?: string[];
+    /** Extra Kiro-Go / kiro.rs data dirs (request_logs.json or usage_log.*.jsonl). */
+    kiroProxyDataDirs?: string[];
   };
   lang?: 'en' | 'zh';
   emoji?: boolean;
@@ -213,6 +215,20 @@ export function setConfigValue(
       return next;
     }
     next.scanner = { ...(next.scanner ?? {}), opencodeDbPaths: paths };
+    return next;
+  }
+
+  if (keyPath === 'scanner.kiroProxyDataDirs') {
+    const paths = [...new Set(values.map(value => value.trim()).filter(Boolean))];
+    if (paths.length === 0) {
+      throw new Error('scanner.kiroProxyDataDirs 至少需要一个 Kiro-Go / kiro.rs 数据目录');
+    }
+    if (paths.length === 1 && ['none', 'off', 'default'].includes(paths[0].toLowerCase())) {
+      next.scanner = { ...(next.scanner ?? {}) };
+      delete next.scanner.kiroProxyDataDirs;
+      return next;
+    }
+    next.scanner = { ...(next.scanner ?? {}), kiroProxyDataDirs: paths };
     return next;
   }
 

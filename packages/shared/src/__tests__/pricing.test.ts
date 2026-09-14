@@ -22,6 +22,10 @@ describe('catalog 结构', () => {
       ['sourcegraph', 'amp'],
       ['inflection', 'pi'],
       ['cursor', 'cursor'],
+      ['kiro', 'kiro'],
+      ['hermes', 'hermes'],
+      ['deepseek', 'deepseek-chat'],
+      ['xai', 'grok'],
       ['droid', 'droid'],
       ['opencode', 'opencode'],
     ];
@@ -63,6 +67,67 @@ describe('calculateCost — 关键模型', () => {
     const r = calculateCost(provider, product, model, tokens);
     expect(r.costStatus).toBe('exact');
     expect(r.estimatedCostUsd).toBeCloseTo(expected, 4);
+  });
+
+  it('Kiro Claude 模型按 Claude Code 公开单价估算', () => {
+    const r = calculateCost('anthropic', 'kiro', 'claude-opus-4.8', tokens);
+    expect(r.costStatus).toBe('estimated');
+    expect(r.resolvedModel).toBe('claude-opus-4-8');
+    expect(r.estimatedCostUsd).toBeCloseTo(30, 4);
+  });
+
+  it.each([
+    ['anthropic', 'claude-sonnet-4-8', 'claude-sonnet-4-6', 18],
+    ['anthropic', 'claude-sonnet-5', 'claude-sonnet-5', 12],
+    ['openai', 'gpt-5.6-sol', 'gpt-5.6-sol', 38],
+    ['zhipu', 'glm-5', 'glm-5', 28 / 7.2],
+  ] as const)('Kiro %s/%s 按对应 API 牌价估算', (provider, model, resolved, expected) => {
+    const r = calculateCost(provider, 'kiro', model, tokens);
+    expect(r.costStatus).toBe('estimated');
+    expect(r.resolvedModel).toBe(resolved);
+    expect(r.estimatedCostUsd).toBeCloseTo(expected, 4);
+  });
+
+  it('Kiro 带日期后缀的 Claude 模型命中显式 alias', () => {
+    const r = calculateCost('anthropic', 'kiro', 'claude-opus-4-5-20251101', tokens);
+    expect(r.costStatus).toBe('estimated');
+    expect(r.resolvedModel).toBe('claude-opus-4-5');
+    expect(r.estimatedCostUsd).toBeCloseTo(30, 4);
+  });
+
+  it('Kiro claude-opus-4.5 点号写法回退到 Opus 4.5 牌价', () => {
+    const r = calculateCost('anthropic', 'kiro', 'claude-opus-4.5', tokens);
+    expect(r.costStatus).toBe('estimated');
+    expect(r.resolvedModel).toBe('claude-opus-4-5');
+    expect(r.estimatedCostUsd).toBeCloseTo(30, 4);
+  });
+
+  it('Cursor Grok 订阅用量按 xAI 公开单价估算', () => {
+    const r = calculateCost('cursor', 'cursor', 'cursor-grok-4.6-xhigh-fast', tokens);
+    expect(r.costStatus).toBe('estimated');
+    expect(r.resolvedModel).toBe('grok-4.6');
+    expect(r.estimatedCostUsd).toBeCloseTo(16, 4);
+  });
+
+  it('Cursor Claude 订阅用量按 Claude Code 公开单价估算', () => {
+    const r = calculateCost('cursor', 'cursor', 'claude-opus-5-thinking-max-fast', tokens);
+    expect(r.costStatus).toBe('estimated');
+    expect(r.resolvedModel).toBe('claude-opus-5');
+    expect(r.estimatedCostUsd).toBeCloseTo(60, 4);
+  });
+
+  it('Hermes Claude 用量按 Claude Code 公开单价估算', () => {
+    const r = calculateCost('hermes', 'hermes', 'claude-opus-5', tokens);
+    expect(r.costStatus).toBe('estimated');
+    expect(r.resolvedModel).toBe('claude-opus-5');
+    expect(r.estimatedCostUsd).toBeCloseTo(30, 4);
+  });
+
+  it('Claude Code 上的 DeepSeek 模型按 DeepSeek 公开单价估算', () => {
+    const r = calculateCost('deepseek', 'claude-code', 'deepseek-v4-flash', tokens);
+    expect(r.costStatus).toBe('estimated');
+    expect(r.resolvedModel).toBe('deepseek-v4-flash');
+    expect(r.estimatedCostUsd).toBeCloseTo(0.42, 4);
   });
 
   it('未知模型返回 unavailable', () => {

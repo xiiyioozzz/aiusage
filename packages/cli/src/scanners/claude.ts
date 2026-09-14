@@ -110,6 +110,17 @@ export async function discoverClaudeProjectDirs(
     candidates,
   );
 
+  const desktop3pDir = platform === 'darwin'
+    ? join(home, 'Library', 'Application Support', 'Claude-3p')
+    : platform === 'win32'
+      ? join(env.APPDATA?.trim() || join(home, 'AppData', 'Roaming'), 'Claude-3p')
+      : join(env.XDG_CONFIG_HOME?.trim() || join(home, '.config'), 'Claude-3p');
+  await discoverCoworkProjectDirs(
+    join(desktop3pDir, 'local-agent-mode-sessions'),
+    0,
+    candidates,
+  );
+
   const seen = new Set<string>();
   const unique: string[] = [];
   for (const candidate of candidates) {

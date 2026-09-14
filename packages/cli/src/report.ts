@@ -12,6 +12,10 @@ import {
   resolveTraeNativeCacheDir,
 } from './scanners/trae.js';
 import { discoverOpenCodeUsageDates } from './scanners/opencode.js';
+import { discoverKiroProxyDates } from './scanners/kiro-proxy.js';
+import { discoverKiroRecoveredDates } from './scanners/kiro-recovered.js';
+import { discoverHermesDates } from './scanners/hermes.js';
+import { discoverCursorDates } from './scanners/cursor.js';
 import type { PricingInfo } from './pricing.js';
 
 export type ReportRange = '7d' | '1m' | '3m' | '6m' | 'all' | 'today';
@@ -59,6 +63,7 @@ export interface LocalReport {
 interface BuildReportOptions {
   projectAliases?: Record<string, string>;
   opencodeDbPaths?: readonly string[];
+  kiroProxyDataDirs?: readonly string[];
   /** 直接传入日期列表时忽略 range 参数 */
   dates?: string[];
   tools?: readonly string[];
@@ -73,7 +78,7 @@ export async function buildLocalReport(
   const requestedDates = options.dates
     ? options.dates
     : range === 'all'
-    ? await discoverAllDates(options.tools, options.opencodeDbPaths)
+    ? await discoverAllDates(options.tools, options.opencodeDbPaths, options.kiroProxyDataDirs)
     : range === 'today'
     ? [dateKey(getTodayLocalDate())]
     : buildPresetDates(range);
@@ -88,6 +93,7 @@ export async function buildLocalReport(
   const results = await scanDates(requestedDates, {
     projectAliases: options.projectAliases,
     opencodeDbPaths: options.opencodeDbPaths,
+    kiroProxyDataDirs: options.kiroProxyDataDirs,
     tools: options.tools,
   });
 
@@ -185,6 +191,7 @@ function buildPresetDates(range: Exclude<ReportRange, 'all' | 'today'>): string[
 async function discoverAllDates(
   tools?: readonly string[],
   opencodeDbPaths?: readonly string[],
+  kiroProxyDataDirs?: readonly string[],
 ): Promise<string[]> {
   const dates = new Set<string>();
   const home = homedir();
@@ -193,6 +200,13 @@ async function discoverAllDates(
   const discoveries: Array<Promise<void>> = [];
 
   if (includes('claude-code')) discoveries.push(discoverClaudeDates(dates));
+  if (includes('cursor')) discoveries.push(discoverCursorDates().then(found => { found.forEach(date => dates.add(date)); }));
+  if (includes('kiro')) {
+    discoveries.push(discoverGenericJsonlDates(join(home, '.kiro', 'sessions'), dates));
+    discoveries.push(discoverKiroProxyDates(kiroProxyDataDirs).then(found => { found.forEach(date => dates.add(date)); }));
+    discoveries.push(discoverKiroRecoveredDates(kiroProxyDataDirs).then(found => { found.forEach(date => dates.add(date)); }));
+  }
+  if (includes('hermes')) discoveries.push(discoverHermesDates().then(found => { found.forEach(date => dates.add(date)); }));
   if (includes('codex')) discoveries.push(discoverCodexDates(dates));
   if (includes('gemini-cli')) discoveries.push(discoverGeminiDates(dates));
   if (includes('copilot-vscode')) discoveries.push(discoverCopilotVscodeDates(dates));

@@ -166,9 +166,10 @@ async function runScan(flags: Record<string, string | boolean>, positionals: str
   const dates = resolveScanDates(flags, config);
   const tools = parseToolSelection(flags.tool, zh);
   const opencodeDbPaths = config.scanner?.opencodeDbPaths;
+  const kiroProxyDataDirs = config.scanner?.kiroProxyDataDirs;
   const results = dates.length === 1
-    ? [await scanDate(dates[0], { projectAliases: config.projectAliases, opencodeDbPaths, tools })]
-    : await scanDates(dates, { projectAliases: config.projectAliases, opencodeDbPaths, tools });
+    ? [await scanDate(dates[0], { projectAliases: config.projectAliases, opencodeDbPaths, kiroProxyDataDirs, tools })]
+    : await scanDates(dates, { projectAliases: config.projectAliases, opencodeDbPaths, kiroProxyDataDirs, tools });
 
   if (isJson) {
     console.log(JSON.stringify(results.length === 1 ? results[0] : results, null, 2));
@@ -241,6 +242,7 @@ async function runReport(flags: Record<string, string | boolean>, positionals: s
   const report = await buildLocalReport(range, {
     projectAliases: config.projectAliases,
     opencodeDbPaths: config.scanner?.opencodeDbPaths,
+    kiroProxyDataDirs: config.scanner?.kiroProxyDataDirs,
     dates,
     tools,
     pricingCatalog: pricing.catalog,
@@ -392,6 +394,7 @@ async function runSync(flags: Record<string, string | boolean>, positionals: str
     scanDates(targetDates, {
       projectAliases: config.projectAliases,
       opencodeDbPaths: config.scanner?.opencodeDbPaths,
+      kiroProxyDataDirs: config.scanner?.kiroProxyDataDirs,
     }),
     buildActivityReport('all', { dates: targetDates, projectAliases: config.projectAliases }),
   ]);

@@ -28,6 +28,9 @@ export const PROVIDER_COLORS: Record<string, string> = {
   opencode: '#f1f5f9',
   trae: '#7c3aed',
   zhipu: '#2563eb',
+  kiro: '#f59e0b',
+  hermes: '#0ea5e9',
+  cursor: '#111827',
 };
 
 export const PROVIDER_LABELS: Record<string, string> = {
@@ -42,6 +45,9 @@ export const PROVIDER_LABELS: Record<string, string> = {
   opencode: 'OpenCode',
   trae: 'Trae',
   zhipu: 'Zhipu AI',
+  kiro: 'Kiro',
+  hermes: 'Hermes',
+  cursor: 'Cursor',
 };
 
 export function providerLabel(id: string): string {
@@ -73,6 +79,10 @@ export function formatProductLabel(raw: string): string {
     trae: 'Trae (All)',
     'trae-cn': 'Trae CN',
     'trae-intl': 'Trae International',
+    kiro: 'Kiro',
+    hermes: 'Hermes',
+    cursor: 'Cursor',
+    codex: 'ChatGPT',
   };
   if (labels[raw]) return labels[raw];
   return raw

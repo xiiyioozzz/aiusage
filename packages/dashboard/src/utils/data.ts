@@ -36,11 +36,12 @@ export function padMonth(ov: OverviewPayload): OverviewPayload {
   const ratio = ov.totalCostUsd > 0 ? totalCostUsd / ov.totalCostUsd : 0;
   const eventRatio = ov.totalEvents > 0 ? totalEvents / ov.totalEvents : 0;
 
-  function scaleShares<T extends { estimatedCostUsd: number; eventCount: number }>(items: T[]): T[] {
+  function scaleShares<T extends { estimatedCostUsd: number; eventCount: number; totalTokens?: number }>(items: T[]): T[] {
     return items.map((it) => ({
       ...it,
       estimatedCostUsd: +(it.estimatedCostUsd * ratio).toFixed(4),
       eventCount: Math.round(it.eventCount * eventRatio),
+      ...(it.totalTokens != null ? { totalTokens: Math.round(it.totalTokens * eventRatio) } : {}),
     }));
   }
 

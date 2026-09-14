@@ -61,6 +61,59 @@ function getServiceTierMultiplier(
   return 1;
 }
 
+const LIST_PRICE_PRODUCT: Record<string, string> = {
+  anthropic: 'claude-code',
+  openai: 'codex',
+  google: 'gemini-cli',
+  xai: 'grok',
+  zhipu: 'glm-chat',
+  deepseek: 'deepseek-chat',
+  moonshot: 'kimi-code',
+  alibaba: 'qwen-code',
+};
+
+function inferProviderFromModel(model: string): string | undefined {
+  const value = model.trim().toLowerCase().replace(/^cursor-/, '');
+  if (/^(claude|opus|sonnet|haiku|fable|mythos)(?:[-.]|$)/.test(value)) return 'anthropic';
+  if (/^(gpt|chatgpt|codex|o[134])(?:[-.]|$)/.test(value)) return 'openai';
+  if (/^gemini(?:[-.]|$)/.test(value)) return 'google';
+  if (/^grok(?:[-.]|$)/.test(value)) return 'xai';
+  if (/^(glm|codegeex)(?:[-.]|$)/.test(value)) return 'zhipu';
+  if (/^deepseek(?:[-.]|$)/.test(value)) return 'deepseek';
+  if (/^(kimi|moonshot)(?:[-/.]|$)/.test(value)) return 'moonshot';
+  if (/^qwen(?:[-.]|$)/.test(value)) return 'alibaba';
+  return undefined;
+}
+
+function normalizeSubscriptionModel(model: string): string {
+  let value = model.trim().toLowerCase().replace(/^cursor-/, '');
+  value = value.replace(/-thinking(?:-(?:max|high|low|medium))?$/, '');
+  value = value.replace(/-(?:max|low|high|xhigh|medium)$/, '');
+  if (value.startsWith('grok-bot') || value.startsWith('grok-4.6') || value.startsWith('grok-4-6')) {
+    return 'grok-4.6';
+  }
+  return value;
+}
+
+function resolveListPriceFallback(
+  catalog: PricingCatalog,
+  provider: string,
+  product: string,
+  model: string,
+): { resolvedModel: string; pricing: ModelPricing; normalized: boolean; provider: string; product: string } | null {
+  const inferred = inferProviderFromModel(model)
+    ?? (product === 'cursor' || product === 'kiro' || product === 'hermes' ? undefined : provider);
+  if (!inferred) return null;
+  const mapped = LIST_PRICE_PRODUCT[inferred];
+  if (!mapped || (inferred === provider && mapped === product)) return null;
+  const candidates = [...new Set([normalizeSubscriptionModel(model), model])];
+  for (const candidate of candidates) {
+    const resolved = resolveModelPricing(catalog, inferred, mapped, candidate);
+    if (resolved) return { ...resolved, normalized: true, provider: inferred, product: mapped };
+  }
+  return null;
+}
+
 /**
  * resolveModelPricing — alias 精确匹配，再 longest-prefix fallback。
  *
@@ -150,12 +203,15 @@ export function calculateCost(
 
   const { baseModel, tier } = splitServiceTierSuffix(model);
 
-  const resolved = resolveModelPricing(cat, provider, product, baseModel);
+  const fallback = resolveListPriceFallback(cat, provider, product, baseModel);
+  const resolved = resolveModelPricing(cat, provider, product, baseModel) ?? fallback;
   if (!resolved) {
     return { estimatedCostUsd: 0, costStatus: 'unavailable', pricingVersion: cat.version };
   }
 
   const { resolvedModel, pricing, normalized } = resolved;
+  const pricingProvider = fallback && resolved === fallback ? fallback.provider : provider;
+  const pricingProduct = fallback && resolved === fallback ? fallback.product : product;
   let costStatus: CostStatus = normalized ? 'estimated' : 'exact';
 
   // 阶梯：按总 input（含 cached/cw）命中档位
@@ -201,7 +257,7 @@ export function calculateCost(
   // 折算 currency → USD
   raw = toUsd(raw, pricing.currency, cat);
 
-  const finalCost = raw * getServiceTierMultiplier(provider, product, resolvedModel, tier);
+  const finalCost = raw * getServiceTierMultiplier(pricingProvider, pricingProduct, resolvedModel, tier);
 
   return {
     estimatedCostUsd: Math.round(finalCost * 10000) / 10000,

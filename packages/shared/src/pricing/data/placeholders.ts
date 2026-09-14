@@ -18,6 +18,14 @@ export const cursor: Record<string, ProductPricing> = {
   cursor: { models: {} },
 };
 
+export const kiro: Record<string, ProductPricing> = {
+  kiro: { models: {} },
+};
+
+export const hermes: Record<string, ProductPricing> = {
+  hermes: { models: {} },
+};
+
 export const droid: Record<string, ProductPricing> = {
   droid: { models: {} },
 };

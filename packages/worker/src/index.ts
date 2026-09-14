@@ -1,6 +1,6 @@
 import { handleHealth } from './routes/health.js';
 import { handleEnroll } from './routes/enroll.js';
-import { handleIngest } from './routes/ingest.js';
+import { handleIngest, handleReprice } from './routes/ingest.js';
 import { handleOverview } from './routes/overview.js';
 import { handleBreakdowns } from './routes/breakdowns.js';
 import { handlePricingApi } from './routes/pricing-api.js';
@@ -56,6 +56,9 @@ export default {
       }
       if (pathname === '/api/v1/ingest/daily' && request.method === 'POST') {
         return handleIngest(request, env);
+      }
+      if (pathname === '/api/v1/ingest/reprice' && request.method === 'POST') {
+        return handleReprice(request, env);
       }
 
       // ── 公开接口 ──

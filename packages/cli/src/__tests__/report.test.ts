@@ -338,4 +338,26 @@ describe('calculateBreakdownCost', () => {
     expect(cost).toBe(2);
     expect([...warnings]).toEqual(['gpt-5.6-sol 的阶梯价格已按每事件平均输入量估算。']);
   });
+
+  it('estimates Kiro Claude usage from the public Claude Code table', async () => {
+    const { calculateBreakdownCost } = await import('../report.js');
+    const warnings = new Set<string>();
+
+    const cost = calculateBreakdownCost({
+      provider: 'anthropic',
+      product: 'kiro',
+      channel: 'ide',
+      model: 'claude-opus-4.8',
+      project: '/tmp/project',
+      eventCount: 1,
+      inputTokens: 1_000_000,
+      cachedInputTokens: 0,
+      cacheWriteTokens: 0,
+      outputTokens: 1_000_000,
+      reasoningOutputTokens: 0,
+    }, warnings);
+
+    expect(cost).toBe(30);
+    expect([...warnings][0]).toContain('claude-opus-4-8');
+  });
 });

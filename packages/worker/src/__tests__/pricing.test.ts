@@ -108,6 +108,66 @@ describe('calculateCost: 基本计费', () => {
     expect(result.costStatus).toBe('exact');
   });
 
+  it('Cursor 订阅用量按公开牌价估算', () => {
+    const result = calculateIngestBreakdownCost({
+      provider: 'cursor',
+      product: 'cursor',
+      channel: 'ide',
+      model: 'cursor-grok-4.6-xhigh-fast',
+      project: 'aiusage',
+      eventCount: 1,
+      inputTokens: 1_000_000,
+      cachedInputTokens: 0,
+      cacheWriteTokens: 0,
+      outputTokens: 1_000_000,
+      reasoningOutputTokens: 0,
+      costUSD: 0,
+    });
+
+    expect(result.estimatedCostUsd).toBeCloseTo(16, 4);
+    expect(result.costStatus).toBe('estimated');
+  });
+
+  it('Hermes 用量按底层模型公开牌价估算', () => {
+    const result = calculateIngestBreakdownCost({
+      provider: 'hermes',
+      product: 'hermes',
+      channel: 'ide',
+      model: 'claude-opus-5',
+      project: 'shop',
+      eventCount: 1,
+      inputTokens: 1_000_000,
+      cachedInputTokens: 0,
+      cacheWriteTokens: 0,
+      outputTokens: 1_000_000,
+      reasoningOutputTokens: 0,
+      costUSD: 0,
+    });
+
+    expect(result.estimatedCostUsd).toBeCloseTo(30, 4);
+    expect(result.costStatus).toBe('estimated');
+  });
+
+  it('Claude Code 上的 DeepSeek 按公开牌价估算', () => {
+    const result = calculateIngestBreakdownCost({
+      provider: 'deepseek',
+      product: 'claude-code',
+      channel: 'cli',
+      model: 'deepseek-v4-flash',
+      project: 'unknown',
+      eventCount: 1,
+      inputTokens: 1_000_000,
+      cachedInputTokens: 0,
+      cacheWriteTokens: 0,
+      outputTokens: 1_000_000,
+      reasoningOutputTokens: 0,
+      costUSD: 0,
+    });
+
+    expect(result.estimatedCostUsd).toBeCloseTo(0.42, 4);
+    expect(result.costStatus).toBe('estimated');
+  });
+
   it('忽略旧 scanner 用作缺省值的零成本', () => {
     const result = calculateIngestBreakdownCost({
       provider: 'openai',

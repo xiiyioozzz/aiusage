@@ -1,4 +1,4 @@
-import type { IngestActivityItem, IngestPayload, CostStatus } from '@aiusage/shared';
+import type { Channel, IngestActivityItem, IngestPayload, CostStatus } from '@aiusage/shared';
 import { jsonOk, jsonError } from '../utils/response.js';
 import { verifyDeviceToken } from '../utils/token.js';
 import { calculateIngestBreakdownCost, getWorstCostStatus } from '../utils/pricing.js';
@@ -209,6 +209,181 @@ export async function handleIngest(request: Request, env: Env): Promise<Response
     .run();
 
   return jsonOk({ daysProcessed: body.days.length, costSummary });
+}
+
+/** Recalculate stored breakdown costs with the current shared catalog. */
+export async function handleReprice(request: Request, env: Env): Promise<Response> {
+  const auth = request.headers.get('Authorization')?.replace('Bearer ', '');
+  if (!auth) return jsonError(401, 'INVALID_TOKEN', 'Missing authorization');
+
+  const tokenPayload = await verifyDeviceToken(auth, env.DEVICE_TOKEN_SECRET);
+  if (!tokenPayload) return jsonError(401, 'INVALID_TOKEN', 'Invalid device token');
+
+  const device = await env.DB.prepare('SELECT status, token_version FROM devices WHERE device_id = ?')
+    .bind(tokenPayload.deviceId)
+    .first<{ status: string; token_version: number }>();
+
+  if (!device) return jsonError(401, 'INVALID_TOKEN', 'Device not found');
+  if (device.status !== 'active') return jsonError(403, 'DEVICE_DISABLED', 'Device has been disabled');
+  if (device.token_version !== tokenPayload.tokenVersion) {
+    return jsonError(401, 'TOKEN_VERSION_MISMATCH', 'Token version mismatch');
+  }
+
+  const product = new URL(request.url).searchParams.get('product')?.trim() || null;
+  const now = new Date().toISOString();
+  const dates = new Set<string>();
+  let rowsUpdated = 0;
+  let offset = 0;
+
+  while (true) {
+    const page = await env.DB.prepare(`
+      SELECT usage_date, provider, product, channel, model, project, event_count,
+             input_tokens, cached_input_tokens, cache_write_tokens, output_tokens,
+             reasoning_output_tokens, extra_metrics_json
+      FROM daily_usage_breakdown
+      WHERE device_id = ?
+        AND (? IS NULL OR product = ?)
+      ORDER BY usage_date, provider, product, channel, model, project
+      LIMIT 100 OFFSET ?
+    `).bind(tokenPayload.deviceId, product, product, offset).all<{
+      usage_date: string;
+      provider: string;
+      product: string;
+      channel: string;
+      model: string;
+      project: string;
+      event_count: number;
+      input_tokens: number;
+      cached_input_tokens: number;
+      cache_write_tokens: number;
+      output_tokens: number;
+      reasoning_output_tokens: number;
+      extra_metrics_json: string | null;
+    }>();
+
+    const rows = page.results ?? [];
+    if (rows.length === 0) break;
+
+    const statements = rows.map((row) => {
+      const extra = parseExtraMetrics(row.extra_metrics_json);
+      const cost = calculateIngestBreakdownCost({
+        provider: row.provider,
+        product: row.product,
+        channel: row.channel as Channel,
+        model: row.model,
+        project: row.project,
+        eventCount: Number(row.event_count ?? 0),
+        inputTokens: Number(row.input_tokens ?? 0),
+        cachedInputTokens: Number(row.cached_input_tokens ?? 0),
+        cacheWriteTokens: Number(row.cache_write_tokens ?? 0),
+        cacheWrite5mTokens: extra.cacheWrite5mTokens ?? Number(row.cache_write_tokens ?? 0),
+        cacheWrite1hTokens: extra.cacheWrite1hTokens ?? 0,
+        outputTokens: Number(row.output_tokens ?? 0),
+        reasoningOutputTokens: Number(row.reasoning_output_tokens ?? 0),
+      });
+      dates.add(row.usage_date);
+      return env.DB.prepare(`
+        UPDATE daily_usage_breakdown
+        SET estimated_cost_usd = ?, cost_status = ?, pricing_version = ?, updated_at = ?
+        WHERE device_id = ? AND usage_date = ? AND provider = ? AND product = ?
+          AND channel = ? AND model = ? AND project = ?
+      `).bind(
+        cost.estimatedCostUsd,
+        cost.costStatus,
+        cost.pricingVersion,
+        now,
+        tokenPayload.deviceId,
+        row.usage_date,
+        row.provider,
+        row.product,
+        row.channel,
+        row.model,
+        row.project,
+      );
+    });
+
+    await env.DB.batch(statements);
+    rowsUpdated += rows.length;
+    offset += rows.length;
+    if (rows.length < 100) break;
+  }
+
+  for (const usageDate of dates) {
+    await refreshDailyUsageCost(env, tokenPayload.deviceId, usageDate, now);
+  }
+
+  return jsonOk({ rowsUpdated, daysUpdated: dates.size });
+}
+
+function parseExtraMetrics(raw: string | null): {
+  cacheWrite5mTokens?: number;
+  cacheWrite1hTokens?: number;
+} {
+  if (!raw) return {};
+  try {
+    const parsed = JSON.parse(raw) as Record<string, unknown>;
+    const cacheWrite5mTokens = Number(parsed.cache_write_5m_tokens ?? parsed.cacheWrite5mTokens);
+    const cacheWrite1hTokens = Number(parsed.cache_write_1h_tokens ?? parsed.cacheWrite1hTokens);
+    return {
+      cacheWrite5mTokens: Number.isFinite(cacheWrite5mTokens) ? cacheWrite5mTokens : undefined,
+      cacheWrite1hTokens: Number.isFinite(cacheWrite1hTokens) ? cacheWrite1hTokens : undefined,
+    };
+  } catch {
+    return {};
+  }
+}
+
+async function refreshDailyUsageCost(
+  env: Env,
+  deviceId: string,
+  usageDate: string,
+  now: string,
+): Promise<void> {
+  const rows = await env.DB.prepare(`
+    SELECT estimated_cost_usd, cost_status
+    FROM daily_usage_breakdown
+    WHERE device_id = ? AND usage_date = ?
+  `).bind(deviceId, usageDate).all<{ estimated_cost_usd: number; cost_status: CostStatus }>();
+
+  const breakdowns = rows.results ?? [];
+  const dayTotalCost = breakdowns.reduce((sum, row) => sum + Number(row.estimated_cost_usd ?? 0), 0);
+  const dayCostStatus = getWorstCostStatus(breakdowns.map((row) => row.cost_status));
+
+  const topProject = await env.DB.prepare(`
+    SELECT COALESCE(project_alias, project_display) as project, SUM(estimated_cost_usd) as total_cost
+    FROM daily_usage_breakdown
+    WHERE device_id = ? AND usage_date = ?
+    GROUP BY COALESCE(project_alias, project_display) ORDER BY total_cost DESC LIMIT 1
+  `).bind(deviceId, usageDate)
+    .first<{ project: string; total_cost: number }>();
+
+  const topModel = await env.DB.prepare(`
+    SELECT model, SUM(estimated_cost_usd) as total_cost
+    FROM daily_usage_breakdown
+    WHERE device_id = ? AND usage_date = ?
+    GROUP BY model ORDER BY total_cost DESC LIMIT 1
+  `).bind(deviceId, usageDate)
+    .first<{ model: string; total_cost: number }>();
+
+  await env.DB.prepare(`
+    UPDATE daily_usage
+    SET estimated_cost_usd = ?, cost_status = ?, pricing_version = ?,
+        top_project_by_cost = ?, top_project_cost_usd = ?,
+        top_model_by_cost = ?, top_model_cost_usd = ?,
+        updated_at = ?
+    WHERE device_id = ? AND usage_date = ?
+  `).bind(
+    Math.round(dayTotalCost * 10000) / 10000,
+    dayCostStatus,
+    'current',
+    topProject?.project ?? 'unknown',
+    topProject?.total_cost ?? 0,
+    topModel?.model ?? 'unknown',
+    topModel?.total_cost ?? 0,
+    now,
+    deviceId,
+    usageDate,
+  ).run();
 }
 
 async function replaceActivityMetrics(

@@ -61,6 +61,42 @@ describe('runDoctor', () => {
     );
   });
 
+  it('detects Kiro-Go request logs', async () => {
+    const dataDir = join(homeDir, '.kiro-go', 'data');
+    await mkdir(dataDir, { recursive: true });
+    await writeFile(join(dataDir, 'request_logs.json'), '[]\n');
+
+    const { runDoctor } = await import('../doctor.js');
+    const checks = await runDoctor('en');
+
+    expect(checks).toContainEqual(
+      expect.objectContaining({
+        group: 'Tools',
+        name: 'Kiro-Go / kiro.rs',
+        status: 'ok',
+        message: '1 session found',
+      }),
+    );
+  });
+
+  it('detects Kiro session transcripts', async () => {
+    const sessionDir = join(homeDir, '.kiro', 'sessions', 'workspace-a', 'sess_test');
+    await mkdir(sessionDir, { recursive: true });
+    await writeFile(join(sessionDir, 'messages.jsonl'), '{}\n');
+
+    const { runDoctor } = await import('../doctor.js');
+    const checks = await runDoctor('en');
+
+    expect(checks).toContainEqual(
+      expect.objectContaining({
+        group: 'Tools',
+        name: 'Kiro',
+        status: 'ok',
+        message: '1 session found',
+      }),
+    );
+  });
+
   it('detects Kimi Code sessions from the new data directory', async () => {
     const sessionDir = join(
       homeDir,
@@ -81,6 +117,23 @@ describe('runDoctor', () => {
       expect.objectContaining({
         group: 'Tools',
         name: 'Kimi Code',
+        status: 'ok',
+        message: '1 session found',
+      }),
+    );
+  });
+
+  it('detects Hermes state database', async () => {
+    await mkdir(join(homeDir, '.hermes'), { recursive: true });
+    await writeFile(join(homeDir, '.hermes', 'state.db'), 'sqlite-placeholder');
+
+    const { runDoctor } = await import('../doctor.js');
+    const checks = await runDoctor('en');
+
+    expect(checks).toContainEqual(
+      expect.objectContaining({
+        group: 'Tools',
+        name: 'Hermes',
         status: 'ok',
         message: '1 session found',
       }),
