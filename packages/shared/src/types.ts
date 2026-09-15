@@ -105,6 +105,8 @@ export interface IngestResponse {
 // ── 公开接口 ──
 
 export interface OverviewResponse {
+  /** Site-timezone calendar day, YYYY-MM-DD. Heatmap / streaks must use this, not the browser clock. */
+  today?: string;
   totalDays: number;
   activeDays: number;
   totalEvents: number;

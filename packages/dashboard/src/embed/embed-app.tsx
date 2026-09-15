@@ -9,7 +9,7 @@ import { useCurrencyStore, useFetchCnyRate } from '../hooks/use-cny-rate';
 import { TOKEN_SERIES, getChartColors, getTokenColor, providerLabel } from '../constants';
 import { useIsDark } from '../hooks/use-dark';
 import {
-  formatUsd, formatCompact, formatNumber, formatPercent, formatModelName, arrSum,
+  formatUsd, formatCompact, formatNumber, formatPercent, formatModelName, formatProjectLabel, arrSum,
 } from '../utils/format';
 
 import { KpiCard } from '../components/kpi-card';
@@ -237,7 +237,11 @@ function WidgetRenderer({
             <EmptyState label={t.tokenUnavailable} />
           ) : (
             <ChartBoundary name="Flow">
-              <FlowChart data={overview?.sankey} />
+              <FlowChart
+                data={overview?.sankey}
+                otherLabel={t.otherProjects}
+                relabel={(name) => formatProjectLabel(name, t)}
+              />
             </ChartBoundary>
           )}
         </>
@@ -261,6 +265,12 @@ function WidgetRenderer({
         estimatedCostUsd: d.estimatedCostUsd,
         eventCount: d.eventCount,
       }));
+      const projectData = (overview?.filters.options.projects ?? []).map((p) => ({
+        value: p.value,
+        label: formatProjectLabel(p.label, t),
+        estimatedCostUsd: p.estimatedCostUsd,
+        eventCount: p.eventCount,
+      }));
 
       const centerLabel = formatUsd(overview?.totalCostUsd ?? 0, currency);
       const modelTokenTotal = modelData.reduce((sum, m) => sum + Number(m.totalTokens || 0), 0);
@@ -278,6 +288,7 @@ function WidgetRenderer({
           formatValue: (value: number) => formatCompact(value),
         },
         { idx: 2, title: t.deviceShare, data: deviceData, colors, centerLabel, metric: 'cost' as const },
+        { idx: 3, title: t.projectShare, data: projectData, colors, centerLabel, metric: 'cost' as const, maxSlices: 28, minSliceRatio: 0.002 },
       ];
 
       const visible = items ? sections.filter((s) => items.includes(s.idx)) : sections;
@@ -300,6 +311,9 @@ function WidgetRenderer({
                 currency={currency}
                 metric={sec.metric}
                 formatValue={sec.formatValue}
+                maxSlices={'maxSlices' in sec ? sec.maxSlices : undefined}
+                minSliceRatio={'minSliceRatio' in sec ? sec.minSliceRatio : undefined}
+                otherLabel={t.otherProjects}
               />
             </div>
           ))}

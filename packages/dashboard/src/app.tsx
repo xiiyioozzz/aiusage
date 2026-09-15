@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState, useCallback } from 'react';
 import {
   RotateCw, Sun, Moon, Monitor,
-  ChevronDown, Check, BrainCircuit,
+  ChevronDown, Check,
 } from 'lucide-react';
 import type { Locale, T } from './i18n';
 import { I18N, getStoredLocale } from './i18n';
@@ -11,7 +11,7 @@ import { TOKEN_SERIES, getChartColors, getTokenColor, providerLabel, formatProdu
 import { useIsDark } from './hooks/use-dark';
 import {
   formatUsd, formatUsdFull, formatCompact, formatNumber, formatPercent,
-  formatModelName, shortDate, longDate, arrSum, foldItems,
+  formatModelName, formatProjectLabel, shortDate, longDate, arrSum,
 } from './utils/format';
 import type { FiltersState, FacetOption } from './hooks/use-overview';
 import { useOverview } from './hooks/use-overview';
@@ -28,27 +28,13 @@ import { buildActivityHeatmapData } from './utils/activity-heatmap-data';
 import { HeaderLogo, useFaviconFromLogo } from './components/site-logo';
 import { SiteFooter } from './components/site-footer';
 import { SITE_TITLE } from './site-config';
-import claudeCodeIcon from '@lobehub/icons-static-svg/icons/claudecode-color.svg?url';
-import claudeIcon from '@lobehub/icons-static-svg/icons/claude-color.svg?url';
-import anthropicIcon from '@lobehub/icons-static-svg/icons/anthropic.svg?url';
-import deepseekIcon from '@lobehub/icons-static-svg/icons/deepseek-color.svg?url';
-import openaiIcon from '@lobehub/icons-static-svg/icons/openai.svg?url';
-import geminiIcon from '@lobehub/icons-static-svg/icons/gemini-color.svg?url';
-import geminiCliIcon from '@lobehub/icons-static-svg/icons/geminicli-color.svg?url';
-import glmvIcon from '@lobehub/icons-static-svg/icons/glmv-color.svg?url';
-import kimiIcon from '@lobehub/icons-static-svg/icons/kimi.svg?url';
-import copilotIcon from '@lobehub/icons-static-svg/icons/githubcopilot.svg?url';
-import traeIcon from '@lobehub/icons-static-svg/icons/trae-color.svg?url';
-import qwenIcon from '@lobehub/icons-static-svg/icons/qwen-color.svg?url';
-import openrouterIcon from '@lobehub/icons-static-svg/icons/openrouter-color.svg?url';
-import antigravityIcon from '@lobehub/icons-static-svg/icons/antigravity-color.svg?url';
-import ampIcon from '@lobehub/icons-static-svg/icons/amp-color.svg?url';
-import cursorIcon from '@lobehub/icons-static-svg/icons/cursor.svg?url';
-import kiroIcon from '@lobehub/icons-static-svg/icons/kiro-color.svg?url';
-import grokIcon from '@lobehub/icons-static-svg/icons/grok.svg?url';
-import opencodeIcon from '@lobehub/icons-static-svg/icons/opencode.svg?url';
-import moonshotIcon from '@lobehub/icons-static-svg/icons/moonshot.svg?url';
-import hermesIcon from './assets/hermes.svg?url';
+import {
+  type FilterIconAsset,
+  iconSrc,
+  modelIcon,
+  productIcon,
+  providerIcon,
+} from './utils/brand-icons';
 
 // ────────────────────────────────────────
 // Constants
@@ -72,77 +58,6 @@ function formatDeltaPercent(current?: number | null, previous?: number | null): 
   if (!Number.isFinite(delta)) return undefined;
   const normalized = Math.abs(delta) < 0.05 ? 0 : delta;
   return `${normalized > 0 ? '+' : ''}${normalized.toFixed(1)}%`;
-}
-
-type FilterIconAsset = {
-  src: string;
-  tone?: 'color' | 'mono';
-} | {
-  Icon: typeof BrainCircuit;
-  tone: 'component';
-};
-
-const colorIcon = (src: string): FilterIconAsset => ({ src, tone: 'color' });
-const monoIcon = (src: string): FilterIconAsset => ({ src, tone: 'mono' });
-const componentIcon = (Icon: typeof BrainCircuit): FilterIconAsset => ({ Icon, tone: 'component' });
-
-function productIcon(value: string): FilterIconAsset | undefined {
-  const id = value.toLowerCase();
-  if (id.includes('claude')) return colorIcon(claudeCodeIcon);
-  if (id.includes('codex')) return monoIcon(openaiIcon);
-  if (id.includes('hermes')) return colorIcon(hermesIcon);
-  if (id.includes('gemini')) return colorIcon(geminiCliIcon);
-  if (id.includes('kimi')) return monoIcon(kimiIcon);
-  if (id.includes('copilot')) return monoIcon(copilotIcon);
-  if (id.includes('trae')) return colorIcon(traeIcon);
-  if (id.includes('qwen')) return colorIcon(qwenIcon);
-  if (id.includes('antigravity')) return colorIcon(antigravityIcon);
-  if (id.includes('amp')) return colorIcon(ampIcon);
-  if (id.includes('cursor')) return monoIcon(cursorIcon);
-  if (id.includes('kiro')) return colorIcon(kiroIcon);
-  if (id.includes('opencode')) return monoIcon(opencodeIcon);
-  return undefined;
-}
-
-function providerIcon(value: string): FilterIconAsset | undefined {
-  const id = value.toLowerCase();
-  if (id.includes('hermes')) return colorIcon(hermesIcon);
-  if (id.includes('kiro')) return colorIcon(kiroIcon);
-  if (id.includes('cursor')) return monoIcon(cursorIcon);
-  if (id.includes('anthropic')) return monoIcon(anthropicIcon);
-  if (id.includes('openai')) return monoIcon(openaiIcon);
-  if (id.includes('google')) return colorIcon(geminiIcon);
-  if (id.includes('deepseek')) return colorIcon(deepseekIcon);
-  if (id.includes('moonshot')) return monoIcon(moonshotIcon);
-  if (id.includes('alibaba')) return colorIcon(qwenIcon);
-  if (id.includes('zhipu')) return colorIcon(glmvIcon);
-  if (id.includes('xai')) return monoIcon(grokIcon);
-  if (id.includes('github')) return monoIcon(copilotIcon);
-  return undefined;
-}
-
-function iconSrc(icon: FilterIconAsset | undefined): string | undefined {
-  if (!icon || icon.tone === 'component') return undefined;
-  return icon.src;
-}
-
-function modelIcon(value: string, label: string): FilterIconAsset {
-  const id = `${value} ${label}`.toLowerCase();
-  if (id.includes('claude')) return colorIcon(claudeIcon);
-  if (id.includes('anthropic')) return monoIcon(anthropicIcon);
-  if (id.includes('deepseek')) return colorIcon(deepseekIcon);
-  if (id.includes('gemini')) return colorIcon(geminiIcon);
-  if (id.includes('glm') || id.includes('zhipu') || id.includes('智谱')) return colorIcon(glmvIcon);
-  if (id.includes('kimi')) return monoIcon(kimiIcon);
-  if (id.includes('moonshot')) return monoIcon(moonshotIcon);
-  if (id.includes('openrouter')) return colorIcon(openrouterIcon);
-  if (id.includes('qwen') || id.includes('通义')) return colorIcon(qwenIcon);
-  if (id.includes('copilot')) return monoIcon(copilotIcon);
-  if (id.includes('trae')) return colorIcon(traeIcon);
-  if (id.includes('composer') || id.includes('cursor')) return monoIcon(cursorIcon);
-  if (id.includes('grok') || id.includes('xai')) return monoIcon(grokIcon);
-  if (id.includes('gpt') || /\bo\d/.test(id) || id.includes('openai')) return monoIcon(openaiIcon);
-  return componentIcon(BrainCircuit);
 }
 
 // ────────────────────────────────────────
@@ -691,7 +606,12 @@ export function App() {
           {/* ── Activity Heatmap ── */}
           <div className="card fade-up p-6" style={{ animationDelay: '120ms' }}>
             <SectionHeader title={locale === 'zh' ? '年度活跃热力图' : 'Activity Heatmap'} />
-            <ActivityHeatmap days={activityHeatmap.days} metricLabel={activityHeatmap.metricLabel} locale={locale} />
+            <ActivityHeatmap
+              days={activityHeatmap.days}
+              today={overview?.today}
+              metricLabel={activityHeatmap.metricLabel}
+              locale={locale}
+            />
           </div>
 
           {/* ── Cost Trend ── */}
@@ -749,7 +669,11 @@ export function App() {
                 <EmptyState label={t.tokenUnavailable} />
               ) : (
                 <ChartBoundary name="Token Flow">
-                  <FlowChart data={overview?.sankey} />
+                  <FlowChart
+                    data={overview?.sankey}
+                    otherLabel={t.otherProjects}
+                    relabel={(name) => formatProjectLabel(name, t)}
+                  />
                 </ChartBoundary>
               )}
             </div>
@@ -780,6 +704,21 @@ export function App() {
                       centerLabel={formatCompact((overview?.modelCostShare ?? []).reduce((sum, m) => sum + Number(m.totalTokens || 0), 0), locale)}
                       formatValue={(value) => formatCompact(value, locale)}
                       getIconSrc={(item) => iconSrc(modelIcon(item.value, item.label))}
+                    />
+                    <div className="my-5 border-t border-slate-100 dark:border-white/[0.08]" />
+                    <DonutSection
+                      title={t.projectShare}
+                      maxSlices={28}
+                      minSliceRatio={0.002}
+                      otherLabel={t.otherProjects}
+                      data={(overview?.filters.options.projects ?? []).map((p) => ({
+                        value: p.value,
+                        label: formatProjectLabel(p.label, t),
+                        estimatedCostUsd: p.estimatedCostUsd,
+                        eventCount: p.eventCount,
+                      }))}
+                      colors={getChartColors(isDark)}
+                      centerLabel={formatUsd(overview?.totalCostUsd ?? 0)}
                     />
                     <div className="my-5 border-t border-slate-100 dark:border-white/[0.08]" />
                     <DonutSection

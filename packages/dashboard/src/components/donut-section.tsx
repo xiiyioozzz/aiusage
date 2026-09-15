@@ -2,6 +2,7 @@ import { useState, useRef } from "react";
 import { Cell, Pie, PieChart, ResponsiveContainer } from "recharts";
 import { ChartContainer } from "./ui/chart";
 import { formatUsd, formatUsdFull, arrSum } from "../utils/format";
+import { foldRankedSlices } from "../utils/fold";
 
 import { EmptyState } from "./chart-helpers";
 import type { CurrencyMode } from "../hooks/use-cny-rate";
@@ -9,15 +10,20 @@ import type { CurrencyMode } from "../hooks/use-cny-rate";
 function foldSliceItems<T extends { slice: number; label: string; value: string }>(
     items: T[],
     limit: number,
-): T[] {
-    if (items.length <= limit) return items;
+    otherLabel = 'Other',
+    minRatio = 0,
+): { rows: T[]; hidden: T[] } {
+    if (minRatio > 0) {
+        return foldRankedSlices(items, { maxNamed: Math.max(limit - 1, 1), minRatio, otherLabel });
+    }
+    if (items.length <= limit) return { rows: items, hidden: [] };
     const head = items.slice(0, limit - 1);
-    const tail = items.slice(limit - 1);
-    const other = tail.reduce(
+    const hidden = items.slice(limit - 1);
+    const other = hidden.reduce(
         (acc, it) => ({ ...acc, slice: acc.slice + Number(it.slice || 0) }),
-        { ...tail[0], value: 'other', label: 'Other', slice: 0 },
+        { ...hidden[0], value: 'other', label: otherLabel, slice: 0 },
     );
-    return [...head, other];
+    return { rows: [...head, other], hidden };
 }
 
 export function ProviderBars({
@@ -61,6 +67,9 @@ export function DonutSection({
     metric = 'cost',
     formatValue,
     getIconSrc,
+    maxSlices,
+    otherLabel,
+    minSliceRatio,
 }: {
     title: string;
     data: Array<{ label: string; value: string; estimatedCostUsd: number; eventCount: number; totalTokens?: number }>;
@@ -70,18 +79,22 @@ export function DonutSection({
     metric?: 'cost' | 'tokens';
     formatValue?: (value: number) => string;
     getIconSrc?: (item: { value: string; label: string }) => string | undefined;
+    maxSlices?: number;
+    otherLabel?: string;
+    minSliceRatio?: number;
 }) {
     const amount = (item: { estimatedCostUsd: number; totalTokens?: number }) =>
       metric === 'tokens' ? Number(item.totalTokens || 0) : Number(item.estimatedCostUsd || 0);
     const sorted = [...data]
       .map((item) => ({ ...item, slice: amount(item) }))
       .sort((a, b) => b.slice - a.slice);
-    const folded = foldSliceItems(sorted, 6);
+    const { rows: folded, hidden } = foldSliceItems(sorted, maxSlices ?? 6, otherLabel, minSliceRatio ?? 0);
     const total = arrSum(folded.map((d) => d.slice));
     const display = formatValue ?? ((value: number) => formatUsd(value, currency));
 
     const containerRef = useRef<HTMLDivElement>(null);
     const [tip, setTip] = useState<{ x: number; y: number; label: string; value: number } | null>(null);
+    const [otherOpen, setOtherOpen] = useState(false);
 
     if (!folded.length) return <EmptyState label="No data" />;
 
@@ -141,20 +154,44 @@ export function DonutSection({
                 </div>
 
                 {/* Legend */}
-                <div className="grid min-w-0 gap-y-2 text-[11px]" style={{ gridTemplateColumns: "minmax(0,1fr) 10px auto auto", columnGap: "10px" }}>
+                <div
+                    className={`grid min-w-0 gap-y-2 text-[11px] ${folded.length + (otherOpen ? hidden.length : 0) > 12 ? 'max-h-[360px] overflow-y-auto pr-1' : ''}`}
+                    style={{ gridTemplateColumns: "minmax(0,1fr) 10px auto auto", columnGap: "10px" }}
+                >
                     {folded.map((item, i) => {
                         const pct = total > 0 ? (item.slice / total) * 100 : 0;
-                        return (
-                            <div key={item.value} className="col-span-4 grid grid-cols-subgrid items-center">
+                        const isOther = item.value === 'other' && hidden.length > 0;
+                        const cells = (
+                            <>
                                 <span className="flex min-w-0 items-center justify-end gap-1.5 text-slate-500 dark:text-slate-400">
                                     {getIconSrc?.(item) && (
                                         <img src={getIconSrc(item)} alt="" className="h-3.5 w-3.5 shrink-0 rounded-[2px]" />
                                     )}
-                                    <span className="truncate">{item.label}</span>
+                                    <span className="truncate">{item.label}{isOther ? (otherOpen ? ' −' : ` +${hidden.length}`) : ''}</span>
                                 </span>
                                 <span className="h-[7px] w-[7px] rounded-full" style={{ backgroundColor: colors[i % colors.length] }} />
                                 <span className="text-right tabular-nums text-slate-400 dark:text-slate-500">{pct.toFixed(1)}%</span>
                                 <span className="text-right font-medium tabular-nums text-slate-900 dark:text-slate-300">{display(item.slice)}</span>
+                            </>
+                        );
+                        return isOther ? (
+                            <button type="button" key={item.value} className="col-span-4 grid grid-cols-subgrid items-center text-left" onClick={() => setOtherOpen((open) => !open)}>
+                                {cells}
+                            </button>
+                        ) : (
+                            <div key={item.value} className="col-span-4 grid grid-cols-subgrid items-center">
+                                {cells}
+                            </div>
+                        );
+                    })}
+                    {otherOpen && hidden.map((item) => {
+                        const pct = total > 0 ? (item.slice / total) * 100 : 0;
+                        return (
+                            <div key={item.value} className="col-span-4 grid grid-cols-subgrid items-center">
+                                <span className="truncate text-right text-slate-400 dark:text-slate-500">{item.label}</span>
+                                <span className="h-[5px] w-[5px] rounded-full bg-slate-300 dark:bg-slate-600" />
+                                <span className="text-right tabular-nums text-slate-300 dark:text-slate-600">{pct.toFixed(1)}%</span>
+                                <span className="text-right tabular-nums text-slate-400 dark:text-slate-500">{display(item.slice)}</span>
                             </div>
                         );
                     })}

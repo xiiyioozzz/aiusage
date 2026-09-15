@@ -14,6 +14,27 @@ export const TOTAL_TOKENS_SQL = `
 const PROJECT_DISPLAY_SQL = `COALESCE(b.project_alias, b.project_display)`;
 const ACTIVITY_PROJECT_DISPLAY_SQL = `COALESCE(a.project_alias, a.project_display)`;
 
+/** Kiro / xkiro 只是通道，按模型名摊回真正的厂商。 */
+export function providerDisplaySql(alias: 'a' | 'b' = 'b'): string {
+  const model = `lower(COALESCE(${alias}.model, ''))`;
+  const inferred = `CASE
+    WHEN ${model} LIKE 'claude%' OR ${model} LIKE 'opus-%' OR ${model} LIKE 'opus.%' OR ${model} = 'opus'
+      OR ${model} LIKE 'sonnet%' OR ${model} LIKE 'haiku%' OR ${model} LIKE 'fable%' OR ${model} LIKE 'mythos%'
+      THEN 'anthropic'
+    WHEN ${model} LIKE 'gpt%' OR ${model} LIKE 'chatgpt%' OR ${model} LIKE 'codex%'
+      OR ${model} LIKE 'o1%' OR ${model} LIKE 'o3%' OR ${model} LIKE 'o4%'
+      THEN 'openai'
+    WHEN ${model} LIKE 'gemini%' THEN 'google'
+    WHEN ${model} LIKE 'qwen%' THEN 'alibaba'
+    WHEN ${model} LIKE 'deepseek%' THEN 'deepseek'
+    WHEN ${model} LIKE 'glm%' OR ${model} LIKE 'codegeex%' THEN 'zhipu'
+    WHEN ${model} LIKE 'kimi%' OR ${model} LIKE 'moonshot%' THEN 'moonshot'
+    WHEN ${model} LIKE 'grok%' THEN 'xai'
+    ELSE ${alias}.provider
+  END`;
+  return `CASE WHEN ${alias}.provider IN ('kiro', 'xkiro') THEN (${inferred}) ELSE ${alias}.provider END`;
+}
+
 export type FilterKey = 'deviceId' | 'provider' | 'product' | 'channel' | 'model' | 'project';
 
 export interface DashboardFilters {
@@ -42,19 +63,17 @@ interface FacetItem {
 }
 
 export async function handleOverview(url: URL, env: Env): Promise<Response> {
-  const filters = parseFilters(url);
+  const timeZone = siteTimeZone(env);
+  const filters = parseFilters(url, new Date(), timeZone);
   if (!filters) return jsonError(400, 'INVALID_PAYLOAD', 'Invalid range parameter', true);
 
   const where = buildWhere(filters);
   const previousFilters = buildPreviousFilters(filters);
 
   // 热力图固定查最近 365 天（不受 range 过滤器影响，但保留 device/provider 等维度过滤）
-  const heatmapMinDate = (() => {
-    const d = new Date();
-    d.setDate(d.getDate() - 364);
-    return d.toISOString().split('T')[0];
-  })();
-  const heatmapWhere = buildWhere({ ...filters, minDate: heatmapMinDate, maxDate: todayDateString(), rangeDays: 365, range: '365d' });
+  const today = dateStringInTimeZone(new Date(), timeZone);
+  const heatmapMinDate = addCalendarDays(today, -364);
+  const heatmapWhere = buildWhere({ ...filters, minDate: heatmapMinDate, maxDate: today, rangeDays: 365, range: '365d' });
 
   const [
     summary,
@@ -107,12 +126,12 @@ export async function handleOverview(url: URL, env: Env): Promise<Response> {
     env.DB.prepare(`
       SELECT
         b.usage_date,
-        b.provider,
+        ${providerDisplaySql('b')} AS provider,
         COALESCE(SUM(b.estimated_cost_usd), 0) AS estimated_cost_usd
       FROM daily_usage_breakdown b
       ${where.whereClause}
-      GROUP BY b.usage_date, b.provider
-      ORDER BY b.usage_date, b.provider
+      GROUP BY b.usage_date, ${providerDisplaySql('b')}
+      ORDER BY b.usage_date, provider
     `).bind(...where.params).all<{
       usage_date: string;
       provider: string;
@@ -214,9 +233,11 @@ export async function handleOverview(url: URL, env: Env): Promise<Response> {
   const totalSessions = Number(summary?.total_sessions ?? 0);
   const costBearingEvents = Number(summary?.cost_bearing_events ?? 0);
   const totalCostUsd = roundUsd(summary?.total_cost_usd ?? 0);
+  const firstUsageDate = trendRows.results?.[0]?.usage_date ?? null;
 
   return jsonOk({
-    totalDays: filters.rangeDays ?? activeDays,
+    today,
+    totalDays: resolveTotalDays(filters.rangeDays, firstUsageDate, today),
     activeDays,
     totalEvents,
     totalSessions,
@@ -228,7 +249,9 @@ export async function handleOverview(url: URL, env: Env): Promise<Response> {
       eventCount: Number(row.event_count ?? 0),
       estimatedCostUsd: roundUsd(row.estimated_cost_usd ?? 0),
     })),
-    providerDailyTrend: (providerTrendRows.results ?? []).map(row => ({
+    providerDailyTrend: (providerTrendRows.results ?? [])
+      .filter(row => !isGatewayProvider(row.provider))
+      .map(row => ({
       usageDate: row.usage_date,
       provider: row.provider,
       estimatedCostUsd: roundUsd(row.estimated_cost_usd ?? 0),
@@ -280,7 +303,7 @@ export async function handleOverview(url: URL, env: Env): Promise<Response> {
       },
       options: {
         devices,
-        providers,
+        providers: providers.filter(item => !isGatewayProvider(item.value)),
         products,
         channels,
         models,
@@ -290,9 +313,13 @@ export async function handleOverview(url: URL, env: Env): Promise<Response> {
   }, true, PUBLIC_READ_CACHE_HEADERS);
 }
 
-export function parseFilters(url: URL): DashboardFilters | null {
+export function parseFilters(
+  url: URL,
+  now: Date = new Date(),
+  timeZone = 'UTC',
+): DashboardFilters | null {
   const range = readTextParam(url, 'range') ?? '30d';
-  const window = buildDateWindow(range);
+  const window = buildDateWindow(range, now, timeZone);
   if (!window) return null;
 
   return {
@@ -354,7 +381,7 @@ export function buildWhere(filters: DashboardFilters, omit?: FilterKey): WherePa
     params.push(filters.maxDate);
   }
   if (omit !== 'deviceId') addValueFilter(clauses, params, 'b.device_id', filters.deviceId);
-  if (omit !== 'provider') addValueFilter(clauses, params, 'b.provider', filters.provider);
+  if (omit !== 'provider') addValueFilter(clauses, params, providerDisplaySql('b'), filters.provider);
   if (omit !== 'product') addProductFilter(clauses, params, 'b', filters.product);
   if (omit !== 'channel') addValueFilter(clauses, params, 'b.channel', filters.channel);
   if (omit !== 'model') addValueFilter(clauses, params, 'b.model', filters.model);
@@ -369,7 +396,11 @@ export function buildWhere(filters: DashboardFilters, omit?: FilterKey): WherePa
 async function loadFacetOptions(column: string, filters: DashboardFilters, env: Env): Promise<FacetItem[]> {
   const omit = toFilterKey(column);
   const where = buildWhere(filters, omit);
-  const columnExpr = column === 'project' ? PROJECT_DISPLAY_SQL : `b.${column}`;
+  const columnExpr = column === 'project'
+    ? PROJECT_DISPLAY_SQL
+    : column === 'provider'
+      ? providerDisplaySql('b')
+      : `b.${column}`;
   const rows = await env.DB.prepare(`
     SELECT
       ${columnExpr} AS value,
@@ -400,7 +431,9 @@ async function loadFacetOptions(column: string, filters: DashboardFilters, env: 
         ? (deviceLabels?.get(row.value) ?? row.value)
         : column === 'product'
           ? productLabel(row.value, false)
-          : row.value,
+          : column === 'provider'
+            ? providerLabel(row.value)
+            : row.value,
     estimatedCostUsd: roundUsd(row.estimated_cost_usd ?? 0),
     eventCount: Number(row.event_count ?? 0),
   })));
@@ -626,7 +659,7 @@ function buildActivityWhere(filters: DashboardFilters): WhereParts {
     params.push(filters.maxDate);
   }
   addValueFilter(clauses, params, 'a.device_id', filters.deviceId);
-  addValueFilter(clauses, params, 'a.provider', filters.provider);
+  addValueFilter(clauses, params, providerDisplaySql('a'), filters.provider);
   addProductFilter(clauses, params, 'a', filters.product);
   if (filters.channel.length > 0 && !filters.channel.includes('cli')) {
     clauses.push('1 = 0');
@@ -715,10 +748,11 @@ function roundUsd(value: number): number {
 export function buildDateWindow(
   range: string,
   now: Date = new Date(),
+  timeZone = 'UTC',
 ): { minDate: string | null; maxDate: string | null; days: number | null } | undefined {
   if (range === 'all') return { minDate: null, maxDate: null, days: null };
 
-  const today = startOfUtcDay(now);
+  const today = parseDateOnly(dateStringInTimeZone(now, timeZone));
   let start: Date;
   let days: number;
 
@@ -747,8 +781,26 @@ function buildPreviousFilters(filters: DashboardFilters): DashboardFilters | nul
   };
 }
 
-function todayDateString(): string {
-  return formatDate(startOfUtcDay(new Date()));
+function siteTimeZone(env: Env): string {
+  return env.DEFAULT_TIMEZONE?.trim() || 'UTC';
+}
+
+export function dateStringInTimeZone(date: Date, timeZone: string): string {
+  const parts = new Intl.DateTimeFormat('en-US', {
+    timeZone,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).formatToParts(date);
+  const year = parts.find((part) => part.type === 'year')?.value;
+  const month = parts.find((part) => part.type === 'month')?.value;
+  const day = parts.find((part) => part.type === 'day')?.value;
+  if (!year || !month || !day) return formatDate(startOfUtcDay(date));
+  return `${year}-${month}-${day}`;
+}
+
+function addCalendarDays(dateStr: string, days: number): string {
+  return formatDate(addUtcDays(parseDateOnly(dateStr), days));
 }
 
 function startOfUtcDay(date: Date): Date {
@@ -768,6 +820,17 @@ function addUtcDays(date: Date, days: number): Date {
 
 function diffUtcDays(start: Date, end: Date): number {
   return Math.round((startOfUtcDay(end).getTime() - startOfUtcDay(start).getTime()) / 86400000);
+}
+
+/** Inclusive calendar days in the selected window. `all` spans first usage date through today. */
+export function resolveTotalDays(
+  rangeDays: number | null,
+  firstUsageDate: string | null,
+  today: string,
+): number {
+  if (rangeDays != null) return rangeDays;
+  if (!firstUsageDate) return 0;
+  return Math.max(0, diffUtcDays(parseDateOnly(firstUsageDate), parseDateOnly(today)) + 1);
 }
 
 function formatDate(date: Date): string {
@@ -799,6 +862,17 @@ function addProductFilter(
   }
   clauses.push(`${tableAlias}.product IN (${values.map(() => '?').join(', ')})`);
   params.push(...values);
+}
+
+function isGatewayProvider(value: string): boolean {
+  return value === 'kiro' || value === 'xkiro';
+}
+
+function providerLabel(value: string): string {
+  if (value === 'hermes') return 'Hermes';
+  if (value === 'cursor') return 'Cursor';
+  if (value === 'codex') return 'ChatGPT';
+  return value;
 }
 
 function productLabel(value: string, combined: boolean): string {

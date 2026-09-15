@@ -5,7 +5,7 @@ import type { Env } from '../types.js';
 type TokenUnit = 'auto' | 'en' | 'zh' | 'raw';
 
 export async function handleTextTokens(url: URL, env: Env): Promise<Response> {
-  const filters = parseFilters(url);
+  const filters = parseFilters(url, new Date(), env.DEFAULT_TIMEZONE?.trim() || 'UTC');
   if (!filters) return jsonError(400, 'INVALID_PAYLOAD', 'Invalid range parameter', true);
 
   const unit = normalizeTokenUnit(url.searchParams.get('unit'));

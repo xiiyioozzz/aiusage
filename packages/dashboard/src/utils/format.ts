@@ -42,6 +42,16 @@ export function formatPercent(v: number): string {
   return `${Number(v || 0).toFixed(1)}%`;
 }
 
+export function formatProjectLabel(
+  raw: string,
+  labels: { emptyWindow: string; otherProjects: string },
+): string {
+  const value = raw.trim();
+  if (value === 'empty-window') return labels.emptyWindow;
+  if (value === 'Other' || value === 'other') return labels.otherProjects;
+  return raw;
+}
+
 export function formatModelName(raw: string, compact = false): string {
   if (!raw || raw === '<synthetic>') return 'Other';
   let s = raw.replace(/-\d{8}$/, '');          // strip date suffix

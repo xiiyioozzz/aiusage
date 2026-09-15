@@ -24,8 +24,19 @@ function SankeyNodeLabel({
   );
 }
 
-export function FlowChart({ data }: { data?: SankeyGraph }) {
-  const sankeyData = transformSankey(data);
+export function FlowChart({
+  data,
+  otherLabel,
+  relabel,
+}: {
+  data?: SankeyGraph;
+  otherLabel?: string;
+  relabel?: (name: string) => string;
+}) {
+  const sankeyData = transformSankey(data, otherLabel);
+  if (sankeyData && relabel) {
+    sankeyData.nodes = sankeyData.nodes.map((node) => ({ ...node, name: relabel(node.name) }));
+  }
   if (!sankeyData) return <EmptyState label="No flow data" />;
   const nodeCount = sankeyData.nodes.length;
   const height = Math.max(360, nodeCount * 40);

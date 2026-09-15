@@ -2,6 +2,12 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import type { Locale } from '../i18n';
 import { useIsDark } from '../hooks/use-dark';
 import type { ActivityHeatmapDay } from '../utils/activity-heatmap-data';
+import {
+  addCalendarDays,
+  computeActivityStreaks,
+  countActiveDaysInWindow,
+  weekdayUtc,
+} from '../utils/activity-heatmap-data';
 
 // ── 常量 ──
 
@@ -33,18 +39,6 @@ function colorForValue(value: number, max: number, isDark: boolean): string {
   return levels[idx];
 }
 
-// ── 日期工具 ──
-
-function toDateStr(d: Date): string {
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
-}
-
-function addDays(d: Date, n: number): Date {
-  const r = new Date(d);
-  r.setDate(r.getDate() + n);
-  return r;
-}
-
 // ── 数字格式 ──
 
 function fmtCompact(n: number): string {
@@ -74,8 +68,9 @@ function useContainerWidth(ref: React.RefObject<HTMLDivElement | null>): number 
 
 // ── 主组件 ──
 
-export function ActivityHeatmap({ days, metricLabel = 'tokens', locale = 'en', className = '' }: {
+export function ActivityHeatmap({ days, today, metricLabel = 'tokens', locale = 'en', className = '' }: {
   days: ActivityHeatmapDay[];
+  today?: string;
   metricLabel?: 'tokens' | 'sessions';
   locale?: Locale;
   className?: string;
@@ -98,41 +93,23 @@ export function ActivityHeatmap({ days, metricLabel = 'tokens', locale = 'en', c
     const byDate = new Map<string, ActivityHeatmapDay>();
     for (const d of days) byDate.set(d.usageDate, d);
 
-    // 右侧固定对齐今天所在周的周六
-    const today = new Date();
-    const dayOfWeek = today.getDay();
-    const endDate = addDays(today, 6 - dayOfWeek);
-    const startDate = addDays(endDate, -(weeks * DAYS - 1));
-
-    const startStr = toDateStr(startDate);
-    const endStr = toDateStr(endDate);
-    const visibleDays = days.filter(d => d.usageDate >= startStr && d.usageDate <= endStr);
+    // Align the right edge to Saturday of the site-timezone week, not the browser clock.
+    const todayStr = today
+      ?? days.map((day) => day.usageDate).sort().at(-1)
+      ?? '1970-01-01';
+    const endStr = addCalendarDays(todayStr, 6 - weekdayUtc(todayStr));
+    const startStr = addCalendarDays(endStr, -(weeks * DAYS - 1));
+    const visibleDays = days.filter((d) => d.usageDate >= startStr && d.usageDate <= todayStr);
 
     const maxActivity = Math.max(0, ...visibleDays.map(d => d.activityValue));
     const totalActivity = visibleDays.reduce((s, d) => s + d.activityValue, 0);
-    const activeDays = visibleDays.filter(d => d.activityValue > 0).length;
+    const activeDays = countActiveDaysInWindow(days, startStr, todayStr);
 
-    let streak = 0;
-    for (let i = 0; i < weeks * DAYS; i++) {
-      const ds = toDateStr(addDays(today, -i));
-      const d = byDate.get(ds);
-      if (!d || d.activityValue === 0) break;
-      streak++;
-    }
-
-    let longestStreak = 0;
-    let run = 0;
-    for (let i = 0; i < weeks * DAYS; i++) {
-      const date = addDays(startDate, i);
-      if (date > today) break;
-      const d = byDate.get(toDateStr(date));
-      if (d && d.activityValue > 0) {
-        run++;
-        longestStreak = Math.max(longestStreak, run);
-      } else {
-        run = 0;
-      }
-    }
+    const { streak, longestStreak } = computeActivityStreaks(
+      days,
+      todayStr,
+      weeks * DAYS,
+    );
 
     const grid: Array<Array<{ dateStr: string; data?: ActivityHeatmapDay }>> = [];
     const monthMarks: Array<{ weekIdx: number; label: string }> = [];
@@ -143,11 +120,10 @@ export function ActivityHeatmap({ days, metricLabel = 'tokens', locale = 'en', c
       let monthToMark = -1;
 
       for (let d = 0; d < DAYS; d++) {
-        const date = addDays(startDate, w * DAYS + d);
-        const ds = toDateStr(date);
+        const ds = addCalendarDays(startStr, w * DAYS + d);
         col.push({ dateStr: ds, data: byDate.get(ds) });
-        if (w > 0 && date.getDate() === 1) {
-          monthToMark = date.getMonth();
+        if (w > 0 && ds.endsWith('-01')) {
+          monthToMark = Number(ds.slice(5, 7)) - 1;
         }
       }
 
@@ -160,7 +136,7 @@ export function ActivityHeatmap({ days, metricLabel = 'tokens', locale = 'en', c
     }
 
     return { grid, monthMarks, maxActivity, activeDays, streak, longestStreak, totalActivity };
-  }, [days, weeks]);
+  }, [days, today, weeks]);
 
   // 内容宽度（格子部分，左对齐内坐标）
   const svgInnerW = weeks * STEP - GAP;

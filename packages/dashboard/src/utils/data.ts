@@ -1,22 +1,13 @@
-import type { SankeyGraph } from '@aiusage/shared';
+import { datesFromMonthStartThrough, type SankeyGraph } from '@aiusage/shared';
 import type { OverviewPayload, FiltersState } from '../hooks/use-overview';
 
-/** Get all YYYY-MM-DD dates for the current month (1st to last day). */
-export function currentMonthDates(): string[] {
-  const now = new Date();
-  const y = now.getFullYear();
-  const m = now.getMonth();
-  const last = new Date(y, m + 1, 0).getDate();
-  const result: string[] = [];
-  for (let d = 1; d <= last; d++) {
-    result.push(`${y}-${String(m + 1).padStart(2, '0')}-${String(d).padStart(2, '0')}`);
-  }
-  return result;
-}
-
-/** Filter overview data to current month and pad remaining days with zeros. */
+/** Filter overview data to the current site-timezone month and pad empty days with zeros. */
 export function padMonth(ov: OverviewPayload): OverviewPayload {
-  const allDates = currentMonthDates();
+  const today = ov.today
+    ?? ov.dailyTrend.map((d) => d.usageDate).sort().at(-1)
+    ?? ov.heatmap.map((d) => d.usageDate).sort().at(-1);
+  if (!today) return ov;
+  const allDates = datesFromMonthStartThrough(today);
 
   const trendMap = new Map(ov.dailyTrend.map((d) => [d.usageDate, d]));
   const compMap = new Map(ov.tokenComposition.map((d) => [d.usageDate, d]));
@@ -27,10 +18,9 @@ export function padMonth(ov: OverviewPayload): OverviewPayload {
     outputTokens: 0, reasoningOutputTokens: 0, totalTokens: 0,
   });
 
-  const monthTrend = dailyTrend.filter((d) => d.estimatedCostUsd > 0);
+  const monthTrend = dailyTrend.filter((d) => d.eventCount > 0 || d.estimatedCostUsd > 0);
   const totalCostUsd = monthTrend.reduce((sum, d) => sum + Number(d.estimatedCostUsd || 0), 0);
   const totalEvents = monthTrend.reduce((sum, d) => sum + Number(d.eventCount || 0), 0);
-  const activeDays = monthTrend.length;
 
   // Scale share/sankey data by cost ratio (month vs full range)
   const ratio = ov.totalCostUsd > 0 ? totalCostUsd / ov.totalCostUsd : 0;
@@ -58,11 +48,11 @@ export function padMonth(ov: OverviewPayload): OverviewPayload {
 
   return {
     ...ov,
-    totalDays: allDates.length,
-    activeDays,
+    totalDays: ov.totalDays,
+    activeDays: ov.activeDays,
     totalEvents,
     totalCostUsd,
-    averageDailyCostUsd: activeDays > 0 ? totalCostUsd / activeDays : 0,
+    averageDailyCostUsd: ov.averageDailyCostUsd,
     dailyTrend,
     providerDailyTrend,
     tokenComposition,
@@ -100,19 +90,26 @@ export function buildQuery(f: FiltersState): string {
   return p.toString();
 }
 
-export function transformSankey(input?: SankeyGraph) {
+export function transformSankey(input?: SankeyGraph, otherLabel = 'Other') {
   if (!input?.nodes.length || !input?.links.length) return null;
 
-  // Fold small target nodes into "Other" if too many
-  const MAX_TARGETS = 8;
+  // Fold only the long tail. Keep unknown / empty-window plus every named
+  // project that still has a visible share, so Other does not hide larger repos.
+  const MAX_NAMED_TARGETS = 28;
+  const MIN_TARGET_RATIO = 0.002;
   const targetIds = new Set(input.links.map((l) => l.target));
   const sourceIds = new Set(input.links.map((l) => l.source));
   const pureTargets = [...targetIds].filter((id) => !sourceIds.has(id));
+  const labelOf = (id: string) => input.nodes.find((n) => n.id === id)?.label ?? id;
+  const isUnknownTarget = (id: string) => {
+    const label = labelOf(id).trim().toLowerCase();
+    return label === 'unknown' || label === 'empty-window';
+  };
 
   let nodes = input.nodes;
   let links = input.links;
 
-  if (pureTargets.length > MAX_TARGETS) {
+  if (pureTargets.length > MAX_NAMED_TARGETS + 2) {
     const targetVolume = new Map<string, number>();
     for (const l of links) {
       if (pureTargets.includes(l.target)) {
@@ -120,12 +117,36 @@ export function transformSankey(input?: SankeyGraph) {
       }
     }
     const sorted = [...targetVolume.entries()].sort((a, b) => b[1] - a[1]);
-    const keepSet = new Set(sorted.slice(0, MAX_TARGETS - 1).map(([id]) => id));
+    const totalVolume = sorted.reduce((sum, [, value]) => sum + value, 0);
+    const floor = totalVolume * MIN_TARGET_RATIO;
+    const rankedNamed = sorted.filter(([id]) => !isUnknownTarget(id));
+    let namedCount = 0;
+    while (namedCount < rankedNamed.length && namedCount < MAX_NAMED_TARGETS) {
+      const value = rankedNamed[namedCount]?.[1] ?? 0;
+      if (namedCount < 6 || value >= floor) {
+        namedCount += 1;
+        continue;
+      }
+      break;
+    }
+    while (namedCount < rankedNamed.length && namedCount < MAX_NAMED_TARGETS) {
+      const other = rankedNamed.slice(namedCount).reduce((sum, [, value]) => sum + value, 0);
+      const last = rankedNamed[namedCount - 1]?.[1] ?? 0;
+      const next = rankedNamed[namedCount]?.[1] ?? 0;
+      if (other > last && next >= floor * 0.5) {
+        namedCount += 1;
+        continue;
+      }
+      break;
+    }
+    const named = rankedNamed.slice(0, namedCount).map(([id]) => id);
+    const unknown = sorted.filter(([id]) => isUnknownTarget(id)).map(([id]) => id);
+    const keepSet = new Set([...unknown, ...named]);
     const otherId = '__other__';
 
     nodes = [
       ...input.nodes.filter((n) => !pureTargets.includes(n.id) || keepSet.has(n.id)),
-      { id: otherId, label: 'Other', layer: Math.max(...input.nodes.map((n) => n.layer)), totalTokens: 0 },
+      { id: otherId, label: otherLabel, layer: Math.max(...input.nodes.map((n) => n.layer)), totalTokens: 0 },
     ];
     links = input.links.map((l) =>
       pureTargets.includes(l.target) && !keepSet.has(l.target)
