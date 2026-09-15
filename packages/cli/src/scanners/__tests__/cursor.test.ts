@@ -51,6 +51,9 @@ describe('cursor project helpers', () => {
     expect(resolveCursorConversationProject('missing', {
       conversationToPath: new Map(),
     }).project).toBe('unknown');
+    expect(resolveCursorConversationProject('chat-empty', {
+      conversationToPath: new Map([['chat-empty', 'empty-window']]),
+    })).toEqual({ project: 'empty-window', projectDisplay: 'empty-window' });
   });
 });
 
@@ -93,5 +96,23 @@ describe('groupCursorUsageEvents', () => {
     expect(byProject['cdk-express']?.eventCount).toBe(1);
     expect(byProject.unknown?.eventCount).toBe(1);
     expect(byProject.unknown?.inputTokens).toBe(8);
+  });
+
+  it('keeps empty-window chats as their own project instead of unknown', () => {
+    const date = dateKey(new Date('2026-09-12T12:00:00Z'));
+    const ts = Date.parse('2026-09-12T12:00:00Z');
+    const result = groupCursorUsageEvents([
+      {
+        timestamp: ts,
+        model: 'grok-4.6',
+        conversationId: 'sidebar-chat',
+        tokenUsage: { inputTokens: 5, outputTokens: 1 },
+      },
+    ], [date], {
+      conversationToPath: new Map([['sidebar-chat', 'empty-window']]),
+    });
+    const [row] = result.get(date) ?? [];
+    expect(row?.project).toBe('empty-window');
+    expect(row?.projectDisplay).toBe('empty-window');
   });
 });

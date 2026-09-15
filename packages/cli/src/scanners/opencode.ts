@@ -440,8 +440,10 @@ function parseOpenCodeMessage(
   const model = cleanString(message.modelID) || cleanString(message.model?.id);
   if (!model) return undefined;
   const rawProvider = cleanString(message.providerID) || cleanString(message.model?.providerID);
-  const provider = canonicalizeOpenCodeProvider(rawProvider)
-    || inferProviderFromModel(model, 'opencode');
+  const canonical = canonicalizeOpenCodeProvider(rawProvider);
+  const provider = isModelGateway(canonical)
+    ? inferProviderFromModel(model, 'opencode')
+    : (canonical ?? inferProviderFromModel(model, 'opencode'));
   const tokens = {
     input: clamp(message.tokens.input),
     cached: clamp(message.tokens.cache?.read),
@@ -544,6 +546,10 @@ function deduplicateOpenCodeSources(records: ParsedOpenCodeRecord[]): ParsedOpen
     const key = record.id || record.fallbackId;
     return !key || seen.add(key);
   });
+}
+
+function isModelGateway(provider?: string): boolean {
+  return provider === 'kiro' || provider === 'xkiro' || provider === 'x_kiro';
 }
 
 function canonicalizeOpenCodeProvider(raw?: string): string | undefined {

@@ -22,6 +22,8 @@ const CURSOR_WEB_BASE_URL_ENV = 'CURSOR_WEB_BASE_URL';
 const CURSOR_STATE_DB_RELATIVE = join('User', 'globalStorage', 'state.vscdb');
 const CURSOR_SESSION_COOKIE = 'WorkosCursorSessionToken';
 const PLACEHOLDER_PROJECTS = new Set(['', 'unknown', 'empty-window', 'New Project', 'workspace']);
+const EMPTY_WINDOW = 'empty-window';
+const EMPTY_WINDOW_FIELDS: ProjectFields = { project: EMPTY_WINDOW, projectDisplay: EMPTY_WINDOW };
 
 // ── 路径解析 ──
 
@@ -285,7 +287,7 @@ function eventsFromCsv(text: string): CursorUsageEvent[] {
   return events;
 }
 
-async function loadCursorUsageEvents(): Promise<CursorUsageEvent[] | null> {
+export async function loadCursorUsageEvents(): Promise<CursorUsageEvent[] | null> {
   const now = Date.now();
   if (usageCache && now - usageCache.at < USAGE_CACHE_MS) return usageCache.events;
 
@@ -318,6 +320,11 @@ async function loadCursorUsageEvents(): Promise<CursorUsageEvent[] | null> {
 
 export function isPlaceholderProjectName(name?: string | null): boolean {
   return PLACEHOLDER_PROJECTS.has((name ?? '').trim());
+}
+
+export function isEmptyWindowName(name?: string | null): boolean {
+  const value = (name ?? '').trim();
+  return value === EMPTY_WINDOW || basename(value) === EMPTY_WINDOW;
 }
 
 export function encodeCursorWorkspacePath(absPath: string): string {
@@ -519,7 +526,9 @@ export function resolveCursorConversationProject(
 ): ProjectFields {
   if (!conversationId) return { project: 'unknown', projectDisplay: 'unknown' };
   const path = index.conversationToPath.get(conversationId);
-  return path ? resolveProjectFields(path, index.aliases) : { project: 'unknown', projectDisplay: 'unknown' };
+  if (!path) return { project: 'unknown', projectDisplay: 'unknown' };
+  if (isEmptyWindowName(path)) return EMPTY_WINDOW_FIELDS;
+  return resolveProjectFields(path, index.aliases);
 }
 
 export interface CursorProjectIndex {
@@ -550,14 +559,20 @@ export async function buildCursorProjectIndex(
   for (const header of tables.headers.values()) rememberPath(knownEncoded, header.workspacePath);
 
   const assign = (id: string | undefined, raw?: string | null) => {
+    if (!id || conversationToPath.has(id)) return;
+    if (isEmptyWindowName(raw)) {
+      conversationToPath.set(id, EMPTY_WINDOW);
+      return;
+    }
     const path = usableProjectPath(raw);
-    if (!id || !path || conversationToPath.has(id)) return;
+    if (!path) return;
     conversationToPath.set(id, path);
   };
 
   for (const [id, header] of tables.headers) {
     assign(id, header.workspacePath);
     assign(id, header.workspaceId ? workspaceFolders.get(header.workspaceId) : undefined);
+    if (header.workspaceId === EMPTY_WINDOW) assign(id, EMPTY_WINDOW);
   }
   for (const [id, projectId] of Object.entries(tables.membership)) {
     assign(id, tables.projects.get(projectId));
@@ -572,7 +587,8 @@ export async function buildCursorProjectIndex(
     }
   }
   for (const [id, encoded] of transcriptToEncoded) {
-    assign(id, nameFromEncodedCursorProject(encoded, knownEncoded));
+    if (encoded === EMPTY_WINDOW) assign(id, EMPTY_WINDOW);
+    else assign(id, nameFromEncodedCursorProject(encoded, knownEncoded));
   }
 
   return { conversationToPath };

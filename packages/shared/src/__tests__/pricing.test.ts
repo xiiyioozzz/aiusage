@@ -69,6 +69,13 @@ describe('calculateCost — 关键模型', () => {
     expect(r.estimatedCostUsd).toBeCloseTo(expected, 4);
   });
 
+  it('Kiro 产品即使 provider 记成 kiro 也按底层模型牌价估算', () => {
+    const r = calculateCost('kiro', 'kiro', 'claude-opus-4.8', tokens);
+    expect(r.costStatus).toBe('estimated');
+    expect(r.resolvedModel).toBe('claude-opus-4-8');
+    expect(r.estimatedCostUsd).toBeCloseTo(30, 4);
+  });
+
   it('Kiro Claude 模型按 Claude Code 公开单价估算', () => {
     const r = calculateCost('anthropic', 'kiro', 'claude-opus-4.8', tokens);
     expect(r.costStatus).toBe('estimated');
