@@ -13,6 +13,7 @@ const WIDGETS = [
   { id: 'stats-row1', nameZh: '指标卡 \u00b7 第一行', nameEn: 'KPI Cards \u00b7 Row 1', descZh: '预估费用、处理 Token、输入、输出、缓存命中', descEn: 'Estimated cost, processed tokens, input, output, cached tokens', height: 128, supportsItems: true, itemsNoteZh: '索引 0-4', itemsNoteEn: 'Index 0-4' },
   { id: 'stats-row2', nameZh: '指标卡 \u00b7 第二行', nameEn: 'KPI Cards \u00b7 Row 2', descZh: '活跃天数、总事件数、用户对话数、日均费用、缓存命中率', descEn: 'Active days, total events, user messages, avg daily cost, cache hit rate', height: 128, supportsItems: true, itemsNoteZh: '索引 0-4', itemsNoteEn: 'Index 0-4' },
   { id: 'cost-trend', nameZh: '费用趋势', nameEn: 'Cost Trend', descZh: '按天展示费用变化的柱状图，支持多厂商堆叠', descEn: 'Daily cost bar chart with multi-provider stacking', height: 360, supportsItems: false },
+  { id: 'cost-composition', nameZh: '费用构成', nameEn: 'Cost Composition', descZh: '按天展示各模型费用占比的堆叠柱状图', descEn: 'Daily stacked cost chart by model', height: 380, supportsItems: false },
   { id: 'token-trend', nameZh: 'Token 趋势', nameEn: 'Token Trend', descZh: '按天展示各类 Token 用量的面积图', descEn: 'Daily token usage area chart by type', height: 380, supportsItems: false },
   { id: 'token-composition', nameZh: 'Token 构成', nameEn: 'Token Composition', descZh: '按天展示 Token 类型分布的堆叠柱状图', descEn: 'Daily token type distribution stacked bar chart', height: 380, supportsItems: false },
   { id: 'flow', nameZh: 'Token 流向', nameEn: 'Token Flow', descZh: '模型到项目的 Token 流向桑基图', descEn: 'Model-to-project token flow Sankey diagram', height: 420, supportsItems: false },
@@ -125,7 +126,7 @@ function getParamsTable(locale: Locale) {
   return [
     { name: 'widget', values: WIDGETS.map((w) => w.id).join(', '), default: '-', desc: isZh ? '要渲染的组件 ID' : 'Widget ID to render', required: true },
     { name: 'items', values: '0,1,2,...', default: isZh ? '全部' : 'all', desc: isZh ? '仅显示指定索引的子项（逗号分隔）' : 'Show only specified sub-items by index (comma-separated)', required: false },
-    { name: 'range', values: '7d, 30d, 90d, 180d, month, all', default: '30d', desc: isZh ? '数据时间范围' : 'Data time range', required: false },
+    { name: 'range', values: 'today, 7d, 30d, 90d, 180d, month, year, all', default: '30d', desc: isZh ? '数据时间范围' : 'Data time range', required: false },
     { name: 'theme', values: 'light, dark, auto', default: 'auto', desc: isZh ? '颜色主题' : 'Color theme', required: false },
     { name: 'transparent', values: '0, 1, true', default: '0', desc: isZh ? '启用透明背景' : 'Enable transparent background', required: false },
     { name: 'locale', values: 'auto, en, zh', default: 'en', desc: isZh ? '界面语言；auto 跟随浏览器语言' : 'Interface language; auto follows browser language', required: false },
@@ -146,7 +147,7 @@ export function EmbedDocsPage() {
   // Config state
   const [selectedWidget, setSelectedWidget] = useState<WidgetId>(WIDGETS[0].id);
   const [themeOpt, setThemeOpt] = useState<'auto' | 'light' | 'dark'>('auto');
-  const [range, setRange] = useState<'7d' | '30d' | '90d' | '180d' | 'month' | 'all'>('30d');
+  const [range, setRange] = useState<'today' | '7d' | '30d' | '90d' | '180d' | 'month' | 'year' | 'all'>('30d');
   const [selectedLocale, setSelectedLocale] = useState<EmbedLocale>('auto');
   const [currencyOpt, setCurrencyOpt] = useState<EmbedCurrency>('auto');
   const [transparent, setTransparent] = useState(false);
@@ -282,11 +283,13 @@ export function EmbedDocsPage() {
             <Seg
               value={range}
               options={[
+                { value: 'today' as const, label: isZh ? '当天' : 'Today' },
                 { value: '7d' as const, label: '7D' },
                 { value: '30d' as const, label: '30D' },
                 { value: '90d' as const, label: '90D' },
                 { value: '180d' as const, label: '180D' },
                 { value: 'month' as const, label: isZh ? '本月' : 'Month' },
+                { value: 'year' as const, label: isZh ? '本年' : 'Year' },
                 { value: 'all' as const, label: isZh ? '全部' : 'All' },
               ]}
               onChange={setRange}

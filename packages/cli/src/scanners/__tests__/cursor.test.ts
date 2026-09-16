@@ -7,6 +7,7 @@ import {
   nameFromEncodedCursorProject,
   parseDateStr,
   resolveCursorConversationProject,
+  resolveEmptyWindowChatName,
   usableProjectPath,
 } from '../cursor.js';
 
@@ -54,6 +55,22 @@ describe('cursor project helpers', () => {
     expect(resolveCursorConversationProject('chat-empty', {
       conversationToPath: new Map([['chat-empty', 'empty-window']]),
     })).toEqual({ project: 'empty-window', projectDisplay: 'empty-window' });
+    expect(resolveEmptyWindowChatName('翻译助手')).toBe('translation-assistant');
+    expect(resolveEmptyWindowChatName('TON/POL free nodes')).toBe('TON-POL free nodes');
+    expect(resolveCursorConversationProject('chat-named', {
+      conversationToPath: new Map([['chat-named', 'empty-window']]),
+      conversationNames: new Map([['chat-named', '翻译助手']]),
+      namedFolders: new Map([['translation-assistant', '/Users/test/Documents/translation-assistant']]),
+    })).toEqual({
+      project: '/Users/test/Documents/translation-assistant',
+      projectDisplay: 'translation-assistant',
+    });
+    expect(resolveCursorConversationProject('chat-legacy-path', {
+      conversationToPath: new Map([['chat-legacy-path', '/Users/test/Documents/翻译助手']]),
+    })).toEqual({
+      project: '/Users/test/Documents/translation-assistant',
+      projectDisplay: 'translation-assistant',
+    });
   });
 });
 
@@ -114,5 +131,25 @@ describe('groupCursorUsageEvents', () => {
     const [row] = result.get(date) ?? [];
     expect(row?.project).toBe('empty-window');
     expect(row?.projectDisplay).toBe('empty-window');
+  });
+
+  it('maps a named empty-window chat onto its English workspace folder', () => {
+    const date = dateKey(new Date('2026-09-12T12:00:00Z'));
+    const ts = Date.parse('2026-09-12T12:00:00Z');
+    const result = groupCursorUsageEvents([
+      {
+        timestamp: ts,
+        model: 'grok-4.6',
+        conversationId: 'translator-chat',
+        tokenUsage: { inputTokens: 5, outputTokens: 1 },
+      },
+    ], [date], {
+      conversationToPath: new Map([['translator-chat', 'empty-window']]),
+      conversationNames: new Map([['translator-chat', '翻译助手']]),
+      namedFolders: new Map([['translation-assistant', '/Users/test/Documents/translation-assistant']]),
+    });
+    const [row] = result.get(date) ?? [];
+    expect(row?.project).toBe('/Users/test/Documents/translation-assistant');
+    expect(row?.projectDisplay).toBe('translation-assistant');
   });
 });

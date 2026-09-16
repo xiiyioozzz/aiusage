@@ -1,10 +1,20 @@
 import { describe, expect, it } from 'vitest';
-import { buildDateWindow, buildWhere, dateStringInTimeZone, parseFilters, providerDisplaySql, resolveTotalDays } from './overview';
+import { buildDailyCostComposition, buildDateWindow, buildPreviousFilters, buildWhere, dateStringInTimeZone, hourInTimeZone, parseFilters, providerDisplaySql, resolveTotalDays } from './overview';
 
 describe('overview filters', () => {
   it('builds inclusive date windows that include today without adding an extra day', () => {
     const now = new Date('2026-07-20T10:00:00.000Z');
 
+    expect(buildDateWindow('today', now)).toEqual({
+      minDate: '2026-07-20',
+      maxDate: '2026-07-20',
+      days: 1,
+    });
+    expect(buildDateWindow('1d', now)).toEqual({
+      minDate: '2026-07-20',
+      maxDate: '2026-07-20',
+      days: 1,
+    });
     expect(buildDateWindow('7d', now)).toEqual({
       minDate: '2026-07-14',
       maxDate: '2026-07-20',
@@ -20,12 +30,44 @@ describe('overview filters', () => {
       maxDate: '2026-07-20',
       days: 20,
     });
+    expect(buildDateWindow('year', now)).toEqual({
+      minDate: '2026-01-01',
+      maxDate: '2026-07-20',
+      days: 201,
+    });
+  });
+
+  it('compares this year against the same calendar span last year', () => {
+    const previous = buildPreviousFilters({
+      minDate: '2026-01-01',
+      maxDate: '2026-09-15',
+      rangeDays: 258,
+      range: 'year',
+      deviceId: [],
+      provider: [],
+      product: [],
+      channel: [],
+      model: [],
+      project: [],
+    });
+    expect(previous).toMatchObject({
+      minDate: '2025-01-01',
+      maxDate: '2025-09-15',
+      range: 'year',
+    });
   });
 
   it('uses the site timezone when UTC is still the previous calendar day', () => {
     const now = new Date('2026-09-14T23:30:00.000Z');
 
     expect(dateStringInTimeZone(now, 'Asia/Shanghai')).toBe('2026-09-15');
+    expect(hourInTimeZone(now, 'Asia/Shanghai')).toBe(7);
+    expect(hourInTimeZone(now, 'UTC')).toBe(23);
+    expect(buildDateWindow('today', now, 'Asia/Shanghai')).toEqual({
+      minDate: '2026-09-15',
+      maxDate: '2026-09-15',
+      days: 1,
+    });
     expect(buildDateWindow('7d', now, 'Asia/Shanghai')).toEqual({
       minDate: '2026-09-09',
       maxDate: '2026-09-15',
@@ -35,6 +77,11 @@ describe('overview filters', () => {
       minDate: '2026-09-08',
       maxDate: '2026-09-14',
       days: 7,
+    });
+    expect(buildDateWindow('year', now, 'Asia/Shanghai')).toEqual({
+      minDate: '2026-01-01',
+      maxDate: '2026-09-15',
+      days: 258,
     });
   });
 
@@ -71,5 +118,22 @@ describe('overview filters', () => {
     const where = buildWhere(filters);
     expect(where.whereClause).toContain(providerDisplaySql('b'));
     expect(where.params).toContain('anthropic');
+  });
+});
+
+describe('buildDailyCostComposition', () => {
+  it('aggregates stored cost by date and model', () => {
+    expect(buildDailyCostComposition([
+      { usage_date: '2026-09-15', model: 'claude-sonnet-4-6', estimated_cost_usd: 10 },
+      { usage_date: '2026-09-15', model: 'gpt-5.4', estimated_cost_usd: 4 },
+      { usage_date: '2026-09-15', model: 'claude-sonnet-4-6', estimated_cost_usd: 2 },
+      { usage_date: '2026-09-14', model: 'gpt-5.4', estimated_cost_usd: 1 },
+      { usage_date: '2026-09-14', model: '', estimated_cost_usd: 9 },
+      { usage_date: '2026-09-13', model: 'gpt-5.4', estimated_cost_usd: 0 },
+    ])).toEqual([
+      { usageDate: '2026-09-14', model: 'gpt-5.4', estimatedCostUsd: 1 },
+      { usageDate: '2026-09-15', model: 'claude-sonnet-4-6', estimatedCostUsd: 12 },
+      { usageDate: '2026-09-15', model: 'gpt-5.4', estimatedCostUsd: 4 },
+    ]);
   });
 });

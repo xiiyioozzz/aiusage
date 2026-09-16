@@ -113,6 +113,8 @@ export async function scanDroidDates(
         reasoningOutputTokens: 0,
       },
       { input, cached: cacheRead, cacheWrite, output, reasoning: thinking },
+      1,
+      ts,
     );
   }
 

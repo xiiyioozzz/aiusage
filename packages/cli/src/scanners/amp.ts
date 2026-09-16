@@ -137,6 +137,8 @@ export async function scanAmpDates(
           reasoningOutputTokens: 0,
         },
         record.tokens,
+        1,
+        record.timestamp,
       );
     }
   }

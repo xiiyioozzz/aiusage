@@ -12,6 +12,12 @@ export default {
   async fetch(request: Request, env: Env): Promise<Response> {
     const url = new URL(request.url);
     const { pathname } = url;
+    const publicHost = 'aiusage.xdullboy.com';
+    if (url.hostname.endsWith('.workers.dev') && url.hostname !== publicHost && !pathname.startsWith('/api/')) {
+      url.protocol = 'https:';
+      url.hostname = publicHost;
+      return Response.redirect(url.toString(), 308);
+    }
 
     // CORS preflight
     if (

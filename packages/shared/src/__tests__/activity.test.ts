@@ -3,7 +3,9 @@ import {
   addCalendarDays,
   computeActivityStreaks,
   datesFromMonthStartThrough,
+  diffCalendarDays,
   isDayActive,
+  shiftCalendarYear,
 } from '../activity';
 
 describe('activity calendar', () => {
@@ -63,6 +65,12 @@ describe('activity calendar', () => {
     expect(datesFromMonthStartThrough('2026-09-15')).toEqual(
       range('2026-09-01', '2026-09-15'),
     );
+  });
+
+  it('counts inclusive calendar gaps and shifts leap-year days safely', () => {
+    expect(diffCalendarDays('2026-01-01', '2026-09-15')).toBe(257);
+    expect(shiftCalendarYear('2026-09-15', -1)).toBe('2025-09-15');
+    expect(shiftCalendarYear('2024-02-29', -1)).toBe('2023-02-28');
   });
 });
 

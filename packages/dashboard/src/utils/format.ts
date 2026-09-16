@@ -65,9 +65,17 @@ export function formatModelName(raw: string, compact = false): string {
   return s;
 }
 
-export function shortDate(v: string): string { return v.slice(5); }
+export function isHourAxisKey(value: string): boolean {
+  return /^\d{4}-\d{2}-\d{2}T\d{2}$/.test(value);
+}
+
+export function shortDate(v: string): string {
+  if (isHourAxisKey(v)) return `${v.slice(11, 13)}:00`;
+  return v.slice(5);
+}
 
 export function longDate(v: string): string {
+  if (isHourAxisKey(v)) return `${v.slice(0, 10)} ${v.slice(11, 13)}:00`;
   const d = new Date(v + 'T00:00:00');
   return Number.isNaN(d.getTime())
     ? v

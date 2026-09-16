@@ -19,12 +19,14 @@ import { ChartBoundary, EmptyState, Skeleton, SectionHeader, ChartLegend } from 
 import { KpiCard, CostKpiCard } from './components/kpi-card';
 import { useFetchCnyRate, useCurrencyStore } from './hooks/use-cny-rate';
 import { CostTrendChart } from './components/cost-trend-chart';
+import { CostCompositionChart } from './components/cost-composition-chart';
 import { TokenTrendChart } from './components/token-trend-chart';
 import { TokenCompositionChart } from './components/token-composition-chart';
 import { FlowChart } from './components/flow-chart';
 import { DonutSection } from './components/donut-section';
 import { ActivityHeatmap } from './components/activity-heatmap';
-import { buildActivityHeatmapData } from './utils/activity-heatmap-data';
+import { buildActivityHeatmapData, resolveRangeStart } from './utils/activity-heatmap-data';
+import { selectChartSeries } from './utils/data';
 import { HeaderLogo, useFaviconFromLogo } from './components/site-logo';
 import { SiteFooter } from './components/site-footer';
 import { SITE_TITLE } from './site-config';
@@ -43,10 +45,12 @@ import {
 function getRanges(t: T) {
   return [
     { value: 'all', label: t.all },
+    { value: 'today', label: t.today },
     { value: '7d', label: t.range7d },
     { value: '30d', label: t.range30d },
     { value: '90d', label: t.range90d },
     { value: 'month', label: t.thisMonth },
+    { value: 'year', label: t.thisYear },
   ] as const;
 }
 
@@ -423,6 +427,10 @@ export function App() {
     dailyTrend: overview?.dailyTrend ?? [],
     tokenMetricsUnavailable: unavailable,
   }), [overview, unavailable]);
+  const chartSeries = useMemo(
+    () => selectChartSeries(overview, filters.range),
+    [overview, filters.range],
+  );
 
   return (
     <main className="mx-auto w-full max-w-[1200px] px-4 pb-16 sm:px-6 lg:px-8">
@@ -605,10 +613,20 @@ export function App() {
 
           {/* ── Activity Heatmap ── */}
           <div className="card fade-up p-6" style={{ animationDelay: '120ms' }}>
-            <SectionHeader title={locale === 'zh' ? '年度活跃热力图' : 'Activity Heatmap'} />
+            <SectionHeader title={filters.range === 'year' ? t.yearHeatmap : t.activityHeatmap} />
             <ActivityHeatmap
               days={activityHeatmap.days}
               today={overview?.today}
+              startDate={overview?.today
+                ? resolveRangeStart(
+                  filters.range,
+                  overview.today,
+                  activityHeatmap.days.map((day) => day.usageDate).sort()[0],
+                )
+                : undefined}
+              range={filters.range}
+              hourly={overview?.hourlyHeatmap}
+              nowHour={overview?.nowHour}
               metricLabel={activityHeatmap.metricLabel}
               locale={locale}
             />
@@ -622,8 +640,25 @@ export function App() {
             ) : (
               <ChartBoundary name="Cost Trend">
                 <CostTrendChart
-                  data={overview?.dailyTrend ?? []}
-                  providerTrend={overview?.providerDailyTrend ?? []}
+                  data={chartSeries.dailyTrend}
+                  providerTrend={chartSeries.providerTrend}
+                />
+              </ChartBoundary>
+            )}
+          </div>
+
+          {/* ── Cost Composition ── */}
+          <div className="card fade-up p-6" style={{ animationDelay: '205ms' }}>
+            <SectionHeader title={t.costComposition} stat={unavailable ? t.unavailable : formatUsd(overview?.totalCostUsd ?? 0)} />
+            {unavailable ? (
+              <EmptyState label={t.costUnavailable} />
+            ) : (
+              <ChartBoundary name="Cost Composition">
+                <CostCompositionChart
+                  data={chartSeries.dailyTrend}
+                  costComposition={chartSeries.costComposition}
+                  otherLabel={t.otherModels}
+                  totalLabel={t.total}
                 />
               </ChartBoundary>
             )}
@@ -637,7 +672,7 @@ export function App() {
             ) : (
               <ChartBoundary name="Token Trend">
                 <TokenTrendChart
-                  data={overview?.tokenComposition ?? []}
+                  data={chartSeries.tokenComposition}
                   locale={locale}
                   totalLabel={t.total}
                   legendItems={tokenLegend}
@@ -654,7 +689,7 @@ export function App() {
             ) : (
               <>
                 <ChartBoundary name="Token Composition">
-                  <TokenCompositionChart data={overview?.tokenComposition ?? []} locale={locale} totalLabel={t.total} />
+                  <TokenCompositionChart data={chartSeries.tokenComposition} locale={locale} totalLabel={t.total} />
                 </ChartBoundary>
                 <ChartLegend items={tokenLegend} />
               </>

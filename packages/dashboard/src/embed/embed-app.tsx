@@ -5,6 +5,7 @@ import type { ThemeMode } from '../theme';
 import { applyTheme } from '../theme';
 import { I18N, type Locale, type T } from '../i18n';
 import { useOverview, type OverviewPayload } from '../hooks/use-overview';
+import { selectChartSeries } from '../utils/data';
 import { useCurrencyStore, useFetchCnyRate } from '../hooks/use-cny-rate';
 import { TOKEN_SERIES, getChartColors, getTokenColor, providerLabel } from '../constants';
 import { useIsDark } from '../hooks/use-dark';
@@ -14,6 +15,7 @@ import {
 
 import { KpiCard } from '../components/kpi-card';
 import { CostTrendChart } from '../components/cost-trend-chart';
+import { CostCompositionChart } from '../components/cost-composition-chart';
 import { TokenTrendChart } from '../components/token-trend-chart';
 import { TokenCompositionChart } from '../components/token-composition-chart';
 import { FlowChart } from '../components/flow-chart';
@@ -120,6 +122,7 @@ function WidgetRenderer({
   t,
   locale,
   currency,
+  range,
 }: {
   widget: string;
   items: number[] | null;
@@ -129,9 +132,11 @@ function WidgetRenderer({
   t: T;
   locale: Locale;
   currency: EmbedCurrency;
+  range: string;
 }) {
   const isDark = useIsDark();
   const unavailable = metricAvailability.tokenMetricsUnavailable;
+  const chartSeries = useMemo(() => selectChartSeries(overview, range), [overview, range]);
   // token legend (shared by token-trend / token-composition)
   const tokenLegend = useMemo(() => {
     if (!overview) return [];
@@ -183,9 +188,30 @@ function WidgetRenderer({
           ) : (
             <ChartBoundary name="Cost Trend">
               <CostTrendChart
-                data={overview?.dailyTrend ?? []}
-                providerTrend={overview?.providerDailyTrend ?? []}
+                data={chartSeries.dailyTrend}
+                providerTrend={chartSeries.providerTrend}
                 currency={currency}
+              />
+            </ChartBoundary>
+          )}
+        </>
+      );
+
+    /* ── Cost Composition ── */
+    case 'cost-composition':
+      return (
+        <>
+          <SectionHeader title={t.costComposition} stat={unavailable ? t.unavailable : formatUsd(overview?.totalCostUsd ?? 0, currency)} />
+          {unavailable ? (
+            <EmptyState label={t.costUnavailable} />
+          ) : (
+            <ChartBoundary name="Cost Composition">
+              <CostCompositionChart
+                data={chartSeries.dailyTrend}
+                costComposition={chartSeries.costComposition}
+                currency={currency}
+                otherLabel={t.otherModels}
+                totalLabel={t.total}
               />
             </ChartBoundary>
           )}
@@ -202,7 +228,7 @@ function WidgetRenderer({
           ) : (
             <>
               <ChartBoundary name="Token Trend">
-                <TokenTrendChart data={overview?.tokenComposition ?? []} locale={locale} totalLabel={t.total} />
+                <TokenTrendChart data={chartSeries.tokenComposition} locale={locale} totalLabel={t.total} />
               </ChartBoundary>
               <ChartLegend items={tokenLegend} />
             </>
@@ -220,7 +246,7 @@ function WidgetRenderer({
           ) : (
             <>
               <ChartBoundary name="Token Composition">
-                <TokenCompositionChart data={overview?.tokenComposition ?? []} locale={locale} totalLabel={t.total} />
+                <TokenCompositionChart data={chartSeries.tokenComposition} locale={locale} totalLabel={t.total} />
               </ChartBoundary>
               <ChartLegend items={tokenLegend} />
             </>
@@ -401,6 +427,7 @@ export function EmbedApp() {
         t={t}
         locale={locale}
         currency={params.currency}
+        range={params.range}
       />
     );
   }

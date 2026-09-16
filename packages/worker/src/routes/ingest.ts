@@ -1,4 +1,4 @@
-import type { Channel, IngestActivityItem, IngestPayload, CostStatus } from '@aiusage/shared';
+import type { Channel, IngestActivityItem, IngestDay, IngestPayload, CostStatus } from '@aiusage/shared';
 import { jsonOk, jsonError } from '../utils/response.js';
 import { verifyDeviceToken } from '../utils/token.js';
 import { calculateIngestBreakdownCost, getWorstCostStatus } from '../utils/pricing.js';
@@ -103,16 +103,11 @@ export async function handleIngest(request: Request, env: Env): Promise<Response
       )
       .run();
 
+    const products = productsInDay(day);
     if (day.breakdowns.some(b => b.product === 'trae-cn' || b.product === 'trae-intl')) {
-      // CLI 1.7.5 briefly stored both editions as `trae`. Once the same day is
-      // re-uploaded with explicit editions, remove only that legacy bucket so
-      // it cannot be counted twice. Other tools and partial imports stay intact.
-      await env.DB.prepare(
-        "DELETE FROM daily_usage_breakdown WHERE device_id = ? AND usage_date = ? AND product = 'trae'",
-      )
-        .bind(tokenPayload.deviceId, day.usageDate)
-        .run();
+      products.add('trae');
     }
+    await deleteBreakdownsForProducts(env, tokenPayload.deviceId, day.usageDate, [...products], Boolean(day.hourly));
 
     for (const { breakdown: b, cost, cacheWrite5mTokens, cacheWrite1hTokens } of breakdownsWithCost) {
       const rawProject = b.project || 'unknown';
@@ -159,6 +154,62 @@ export async function handleIngest(request: Request, env: Env): Promise<Response
           now, now,
         )
         .run();
+    }
+
+    if (Array.isArray(day.hourly)) {
+      for (const bucket of day.hourly) {
+        const hour = Math.trunc(Number(bucket.hour));
+        if (!Number.isInteger(hour) || hour < 0 || hour > 23) continue;
+        for (const b of bucket.breakdowns ?? []) {
+          const cacheWrite5mTokens = b.cacheWrite5mTokens ?? b.cacheWriteTokens;
+          const cacheWrite1hTokens = b.cacheWrite1hTokens ?? 0;
+          const cost = calculateIngestBreakdownCost(b);
+          const rawProject = b.project || 'unknown';
+          const isFullPath = rawProject.startsWith('/') || /^[A-Z]:\\/i.test(rawProject);
+          const projectDisplay = b.projectDisplay ?? (isFullPath ? rawProject.split('/').filter(Boolean).pop() || 'unknown' : rawProject);
+          const projectAlias = b.projectAlias ?? null;
+
+          await env.DB.prepare(`
+            INSERT INTO hourly_usage_breakdown
+              (device_id, usage_date, usage_hour, provider, product, channel, model, project,
+               project_display, project_alias,
+               event_count, session_count, input_tokens, cached_input_tokens, cache_write_tokens,
+               output_tokens, reasoning_output_tokens, estimated_cost_usd, cost_status,
+               pricing_version, extra_metrics_json, created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT (device_id, usage_date, usage_hour, provider, product, channel, model, project)
+            DO UPDATE SET
+              project_display = excluded.project_display,
+              project_alias = excluded.project_alias,
+              event_count = excluded.event_count,
+              session_count = excluded.session_count,
+              input_tokens = excluded.input_tokens,
+              cached_input_tokens = excluded.cached_input_tokens,
+              cache_write_tokens = excluded.cache_write_tokens,
+              output_tokens = excluded.output_tokens,
+              reasoning_output_tokens = excluded.reasoning_output_tokens,
+              estimated_cost_usd = excluded.estimated_cost_usd,
+              cost_status = excluded.cost_status,
+              pricing_version = excluded.pricing_version,
+              extra_metrics_json = excluded.extra_metrics_json,
+              updated_at = excluded.updated_at
+          `)
+            .bind(
+              tokenPayload.deviceId, day.usageDate, hour,
+              b.provider, b.product, b.channel, b.model || 'unknown', rawProject,
+              projectDisplay, projectAlias,
+              b.eventCount, b.sessionCount ?? 0, b.inputTokens, b.cachedInputTokens, b.cacheWriteTokens,
+              b.outputTokens, b.reasoningOutputTokens,
+              cost.estimatedCostUsd, cost.costStatus, cost.pricingVersion,
+              JSON.stringify({
+                cache_write_5m_tokens: cacheWrite5mTokens,
+                cache_write_1h_tokens: cacheWrite1hTokens,
+              }),
+              now, now,
+            )
+            .run();
+        }
+      }
     }
 
     await replaceActivityMetrics(env, tokenPayload.deviceId, day.usageDate, day.activity?.items ?? [], now);
@@ -384,6 +435,42 @@ async function refreshDailyUsageCost(
     deviceId,
     usageDate,
   ).run();
+}
+
+function productsInDay(day: IngestDay): Set<string> {
+  const products = new Set<string>();
+  for (const breakdown of day.breakdowns) {
+    if (breakdown.product) products.add(breakdown.product);
+  }
+  for (const bucket of day.hourly ?? []) {
+    for (const breakdown of bucket.breakdowns ?? []) {
+      if (breakdown.product) products.add(breakdown.product);
+    }
+  }
+  return products;
+}
+
+async function deleteBreakdownsForProducts(
+  env: Env,
+  deviceId: string,
+  usageDate: string,
+  products: string[],
+  replaceHourly: boolean,
+): Promise<void> {
+  if (products.length === 0) return;
+  const placeholders = products.map(() => '?').join(', ');
+  await env.DB.prepare(
+    `DELETE FROM daily_usage_breakdown WHERE device_id = ? AND usage_date = ? AND product IN (${placeholders})`,
+  )
+    .bind(deviceId, usageDate, ...products)
+    .run();
+  if (replaceHourly) {
+    await env.DB.prepare(
+      `DELETE FROM hourly_usage_breakdown WHERE device_id = ? AND usage_date = ? AND product IN (${placeholders})`,
+    )
+      .bind(deviceId, usageDate, ...products)
+      .run();
+  }
 }
 
 async function replaceActivityMetrics(

@@ -124,6 +124,8 @@ export async function scanQwenDates(
           reasoningOutputTokens: 0,
         },
         { input, cached, cacheWrite: 0, output, reasoning: thoughts },
+        1,
+        ts,
       );
     }
   }

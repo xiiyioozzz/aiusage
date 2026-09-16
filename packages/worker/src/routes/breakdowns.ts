@@ -1,6 +1,7 @@
 import { DEFAULT_BREAKDOWN_LIMIT, MAX_BREAKDOWN_LIMIT } from '@aiusage/shared';
 import { PUBLIC_READ_CACHE_HEADERS, jsonError, jsonOk } from '../utils/response.js';
 import { toPublicProjectName } from '../utils/privacy.js';
+import { buildDateWindow } from './overview.js';
 import type { Env } from '../types.js';
 
 const SORT_FIELDS: Record<string, string> = {
@@ -48,11 +49,15 @@ export async function handleBreakdowns(url: URL, env: Env): Promise<Response> {
     conditions.push('b.usage_date = ?');
     params.push(date);
   } else {
-    const minDate = buildMinDate(range);
-    if (minDate === undefined) return jsonError(400, 'INVALID_PAYLOAD', 'Invalid range parameter', true);
-    if (minDate) {
+    const window = buildDateWindow(range, new Date(), env.DEFAULT_TIMEZONE?.trim() || 'UTC');
+    if (!window) return jsonError(400, 'INVALID_PAYLOAD', 'Invalid range parameter', true);
+    if (window.minDate) {
       conditions.push('b.usage_date >= ?');
-      params.push(minDate);
+      params.push(window.minDate);
+    }
+    if (window.maxDate) {
+      conditions.push('b.usage_date <= ?');
+      params.push(window.maxDate);
     }
   }
 
@@ -182,19 +187,4 @@ function normalizeOrder(value: string | null): 'ASC' | 'DESC' {
 
 function roundUsd(value: number): number {
   return Math.round(Number(value || 0) * 10000) / 10000;
-}
-
-function buildMinDate(range: string): string | null | undefined {
-  if (range === 'all') return null;
-
-  const now = new Date();
-  let days: number;
-  if (range === '7d') days = 7;
-  else if (range === '30d') days = 30;
-  else if (range === '3m' || range === '90d') days = 90;
-  else if (range === '6m' || range === '180d') days = 180;
-  else return undefined;
-
-  const min = new Date(now.getTime() - days * 24 * 60 * 60 * 1000);
-  return min.toISOString().split('T')[0];
 }

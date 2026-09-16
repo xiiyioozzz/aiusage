@@ -19,6 +19,17 @@ export function weekdayUtc(dateStr: string): number {
   return parseDateOnly(dateStr).getUTCDay();
 }
 
+export function diffCalendarDays(start: string, end: string): number {
+  return Math.round((parseDateOnly(end).getTime() - parseDateOnly(start).getTime()) / 86_400_000);
+}
+
+export function shiftCalendarYear(dateStr: string, years: number): string {
+  const [year, month, day] = dateStr.split('-').map(Number);
+  const nextYear = (year ?? 1970) + years;
+  const lastDay = new Date(Date.UTC(nextYear, month ?? 1, 0)).getUTCDate();
+  return `${String(nextYear).padStart(4, '0')}-${String(month ?? 1).padStart(2, '0')}-${String(Math.min(day ?? 1, lastDay)).padStart(2, '0')}`;
+}
+
 export function datesFromMonthStartThrough(today: string): string[] {
   const day = Number(today.slice(8, 10));
   const prefix = today.slice(0, 8);

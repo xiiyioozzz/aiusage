@@ -5,6 +5,7 @@ import type {
   PricingTier,
   CostCalcInput,
   CostCalcResult,
+  CostParts,
 } from './types.js';
 import { catalog as defaultCatalog } from './catalog.js';
 
@@ -198,7 +199,7 @@ export function calculateCost(
     tokens.outputTokens;
 
   if (totalTokens === 0) {
-    return { estimatedCostUsd: 0, costStatus: 'exact', pricingVersion: cat.version };
+    return emptyCostResult(0, 'exact', cat.version);
   }
 
   const { baseModel, tier } = splitServiceTierSuffix(model);
@@ -206,7 +207,7 @@ export function calculateCost(
   const fallback = resolveListPriceFallback(cat, provider, product, baseModel);
   const resolved = resolveModelPricing(cat, provider, product, baseModel) ?? fallback;
   if (!resolved) {
-    return { estimatedCostUsd: 0, costStatus: 'unavailable', pricingVersion: cat.version };
+    return emptyCostResult(0, 'unavailable', cat.version);
   }
 
   const { resolvedModel, pricing, normalized } = resolved;
@@ -248,24 +249,110 @@ export function calculateCost(
     : ((tokens.cacheWrite5mTokens ?? tokens.cacheWriteTokens) / 1_000_000) * cw5Rate +
       ((tokens.cacheWrite1hTokens ?? 0) / 1_000_000) * cw1hRate;
 
-  let raw =
-    (tokens.inputTokens / 1_000_000) * (unit.input_per_million ?? 0) +
-    (tokens.cachedInputTokens / 1_000_000) * (cachedRate ?? 0) +
-    cacheWriteCost +
-    (tokens.outputTokens / 1_000_000) * (unit.output_per_million ?? 0);
-
-  // 折算 currency → USD
-  raw = toUsd(raw, pricing.currency, cat);
-
-  const finalCost = raw * getServiceTierMultiplier(pricingProvider, pricingProduct, resolvedModel, tier);
+  const multiplier = getServiceTierMultiplier(pricingProvider, pricingProduct, resolvedModel, tier);
+  const inputCostUsd = toUsd((tokens.inputTokens / 1_000_000) * (unit.input_per_million ?? 0), pricing.currency, cat) * multiplier;
+  const cachedCostUsd = toUsd((tokens.cachedInputTokens / 1_000_000) * (cachedRate ?? 0), pricing.currency, cat) * multiplier;
+  const cacheWriteCostUsd = toUsd(cacheWriteCost, pricing.currency, cat) * multiplier;
+  const outputUsd = toUsd((tokens.outputTokens / 1_000_000) * (unit.output_per_million ?? 0), pricing.currency, cat) * multiplier;
+  const { outputCostUsd, reasoningCostUsd } = splitOutputCost(outputUsd, tokens.outputTokens, tokens.reasoningOutputTokens ?? 0);
+  const finalCost = inputCostUsd + cachedCostUsd + cacheWriteCostUsd + outputCostUsd + reasoningCostUsd;
 
   return {
-    estimatedCostUsd: Math.round(finalCost * 10000) / 10000,
+    ...roundCostParts({
+      inputCostUsd,
+      cachedCostUsd,
+      cacheWriteCostUsd,
+      outputCostUsd,
+      reasoningCostUsd,
+    }, finalCost),
     costStatus,
     pricingVersion: cat.version,
     resolvedModel,
     matchedTierIndex,
   };
+}
+
+export function calculateCostParts(
+  provider: string,
+  product: string,
+  model: string,
+  tokens: CostCalcInput,
+  options: CalculateCostOptions = {},
+): CostCalcResult {
+  return calculateCost(provider, product, model, tokens, options);
+}
+
+/** Scale catalog parts so they sum to a stored daily cost (Claude JSONL costUSD, etc.). */
+export function scaleCostParts(parts: CostParts, targetUsd: number): CostParts {
+  const catalogTotal = parts.inputCostUsd + parts.cachedCostUsd + parts.cacheWriteCostUsd
+    + parts.outputCostUsd + parts.reasoningCostUsd;
+  if (targetUsd <= 0) return zeroCostParts();
+  if (catalogTotal <= 0) return { ...zeroCostParts(), inputCostUsd: roundUsd4(targetUsd) };
+  const factor = targetUsd / catalogTotal;
+  return roundCostParts({
+    inputCostUsd: parts.inputCostUsd * factor,
+    cachedCostUsd: parts.cachedCostUsd * factor,
+    cacheWriteCostUsd: parts.cacheWriteCostUsd * factor,
+    outputCostUsd: parts.outputCostUsd * factor,
+    reasoningCostUsd: parts.reasoningCostUsd * factor,
+  }, targetUsd);
+}
+
+function splitOutputCost(outputUsd: number, outputTokens: number, reasoningTokens: number): {
+  outputCostUsd: number;
+  reasoningCostUsd: number;
+} {
+  const billed = outputTokens + reasoningTokens;
+  if (outputUsd <= 0 || reasoningTokens <= 0 || billed <= 0) {
+    return { outputCostUsd: outputUsd, reasoningCostUsd: 0 };
+  }
+  return {
+    outputCostUsd: outputUsd * (outputTokens / billed),
+    reasoningCostUsd: outputUsd * (reasoningTokens / billed),
+  };
+}
+
+function roundCostParts(parts: CostParts, targetUsd: number): CostParts & { estimatedCostUsd: number } {
+  const keys: Array<keyof CostParts> = [
+    'inputCostUsd', 'cachedCostUsd', 'cacheWriteCostUsd', 'outputCostUsd', 'reasoningCostUsd',
+  ];
+  const rounded = {
+    inputCostUsd: roundUsd4(parts.inputCostUsd),
+    cachedCostUsd: roundUsd4(parts.cachedCostUsd),
+    cacheWriteCostUsd: roundUsd4(parts.cacheWriteCostUsd),
+    outputCostUsd: roundUsd4(parts.outputCostUsd),
+    reasoningCostUsd: roundUsd4(parts.reasoningCostUsd),
+  };
+  const target = roundUsd4(targetUsd);
+  const drift = roundUsd4(target - keys.reduce((sum, key) => sum + rounded[key], 0));
+  if (drift !== 0) {
+    const absorb = keys.find((key) => rounded[key] > 0) ?? 'inputCostUsd';
+    rounded[absorb] = roundUsd4(rounded[absorb] + drift);
+  }
+  return { ...rounded, estimatedCostUsd: target };
+}
+
+function emptyCostResult(estimatedCostUsd: number, costStatus: CostStatus, pricingVersion: string): CostCalcResult {
+  return {
+    ...zeroCostParts(),
+    estimatedCostUsd,
+    costStatus,
+    pricingVersion,
+  };
+}
+
+function zeroCostParts(): CostParts {
+  return {
+    inputCostUsd: 0,
+    cachedCostUsd: 0,
+    cacheWriteCostUsd: 0,
+    outputCostUsd: 0,
+    reasoningCostUsd: 0,
+  };
+}
+
+function roundUsd4(value: number): number {
+  return Math.round(Number(value || 0) * 10000) / 10000;
 }
 
 export function getWorstCostStatus(statuses: CostStatus[]): CostStatus {

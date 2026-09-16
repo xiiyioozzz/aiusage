@@ -1,7 +1,7 @@
 import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
 import { copyFile, mkdtemp, rm } from 'node:fs/promises';
 import { homedir, tmpdir } from 'node:os';
-import { basename, join, resolve } from 'node:path';
+import { basename, dirname, join, resolve } from 'node:path';
 import type { IngestBreakdown } from '@aiusage/shared';
 import {
   accumulate,
@@ -24,6 +24,9 @@ const CURSOR_SESSION_COOKIE = 'WorkosCursorSessionToken';
 const PLACEHOLDER_PROJECTS = new Set(['', 'unknown', 'empty-window', 'New Project', 'workspace']);
 const EMPTY_WINDOW = 'empty-window';
 const EMPTY_WINDOW_FIELDS: ProjectFields = { project: EMPTY_WINDOW, projectDisplay: EMPTY_WINDOW };
+const EMPTY_WINDOW_CHAT_ALIASES: Record<string, string> = {
+  翻译助手: 'translation-assistant',
+};
 
 // ── 路径解析 ──
 
@@ -251,6 +254,20 @@ export function parseDateStr(v?: string): string | null {
   return dateKey(d);
 }
 
+function eventWhen(event: CursorUsageEvent): Date | null {
+  if (event.timestamp == null || event.timestamp === '') return null;
+  if (typeof event.timestamp === 'number' || /^\d+(\.\d+)?$/.test(String(event.timestamp))) {
+    const num = typeof event.timestamp === 'number' ? event.timestamp : Number(event.timestamp);
+    const ms = num < 1e12 ? num * 1000 : num;
+    const d = new Date(ms);
+    return isNaN(d.getTime()) ? null : d;
+  }
+  const s = String(event.timestamp).trim().replace(/^"|"$/g, '');
+  if (/^\d{4}-\d{2}-\d{2}$/.test(s)) return null;
+  const d = new Date(s);
+  return isNaN(d.getTime()) ? null : d;
+}
+
 function col(row: Record<string, string>, ...names: string[]): string {
   for (const name of names) {
     if (row[name]) return row[name];
@@ -430,6 +447,7 @@ function readWorkspaceFolderMap(cursorRoot: string): Map<string, string> {
 interface ComposerHeader {
   workspaceId?: string;
   workspacePath?: string;
+  name?: string;
 }
 
 interface CloudAgent {
@@ -468,6 +486,7 @@ async function readProjectTables(dbPath: string): Promise<{
       const id = String(row.composerId ?? '').trim();
       if (!id) continue;
       const value = parseJson<{
+        name?: unknown;
         workspaceIdentifier?: { id?: string; uri?: unknown };
         trackedGitRepos?: Array<{ repo?: string; url?: string } | string>;
       }>(row.value);
@@ -476,6 +495,7 @@ async function readProjectTables(dbPath: string): Promise<{
       headers.set(id, {
         workspaceId: row.workspaceId ? String(row.workspaceId) : undefined,
         workspacePath,
+        name: typeof value?.name === 'string' ? value.name.trim() || undefined : undefined,
       });
     }
 
@@ -520,20 +540,78 @@ async function readProjectTables(dbPath: string): Promise<{
   }
 }
 
+export function resolveEmptyWindowChatName(name?: string | null): string | undefined {
+  const raw = (name ?? '').trim();
+  if (!raw || isPlaceholderProjectName(raw) || isEmptyWindowName(raw)) {
+    return undefined;
+  }
+  const named = (EMPTY_WINDOW_CHAT_ALIASES[raw] ?? raw).replace(/[\\/]+/g, '-').replace(/\s+/g, ' ').trim();
+  if (!named || isPlaceholderProjectName(named) || isEmptyWindowName(named)) return undefined;
+  return named;
+}
+
+export function rewriteLegacyProjectPath(raw?: string | null): string | undefined {
+  const value = raw?.trim();
+  if (!value) return undefined;
+  if (isEmptyWindowName(value)) return EMPTY_WINDOW;
+  const mapped = EMPTY_WINDOW_CHAT_ALIASES[basename(value)];
+  if (!mapped) return usableProjectPath(value);
+  if (basename(value) === value) return mapped;
+  return join(dirname(value), mapped);
+}
+
 export function resolveCursorConversationProject(
   conversationId: string | undefined,
   index: CursorProjectIndex,
 ): ProjectFields {
   if (!conversationId) return { project: 'unknown', projectDisplay: 'unknown' };
-  const path = index.conversationToPath.get(conversationId);
+  const path = rewriteLegacyProjectPath(index.conversationToPath.get(conversationId));
   if (!path) return { project: 'unknown', projectDisplay: 'unknown' };
-  if (isEmptyWindowName(path)) return EMPTY_WINDOW_FIELDS;
+  if (isEmptyWindowName(path)) return resolveEmptyWindowProject(conversationId, index);
   return resolveProjectFields(path, index.aliases);
+}
+
+function resolveEmptyWindowProject(
+  conversationId: string,
+  index: CursorProjectIndex,
+): ProjectFields {
+  const named = resolveEmptyWindowChatName(index.conversationNames?.get(conversationId));
+  if (!named) return EMPTY_WINDOW_FIELDS;
+  const folder = index.namedFolders?.get(named);
+  if (folder) return resolveProjectFields(folder, index.aliases);
+  return { project: named, projectDisplay: named };
 }
 
 export interface CursorProjectIndex {
   conversationToPath: Map<string, string>;
+  conversationNames?: Map<string, string>;
+  namedFolders?: Map<string, string>;
   aliases?: Record<string, string>;
+}
+
+function collectNamedFolders(home: string, knownEncoded: Map<string, string>): Map<string, string> {
+  const namedFolders = new Map<string, string>();
+  const remember = (raw?: string | null) => {
+    const path = usableProjectPath(raw);
+    if (!path) return;
+    namedFolders.set(basename(path), path);
+  };
+  for (const path of knownEncoded.values()) remember(path);
+  const documents = join(home, 'Documents');
+  if (!existsSync(documents)) return namedFolders;
+  try {
+    for (const name of readdirSync(documents)) {
+      const full = join(documents, name);
+      try {
+        if (statSync(full).isDirectory()) remember(full);
+      } catch {
+        // ignore unreadable entries
+      }
+    }
+  } catch {
+    // ignore unreadable Documents
+  }
+  return namedFolders;
 }
 
 export async function buildCursorProjectIndex(
@@ -541,7 +619,8 @@ export async function buildCursorProjectIndex(
   home = homedir(),
 ): Promise<CursorProjectIndex> {
   const conversationToPath = new Map<string, string>();
-  if (!dbPath) return { conversationToPath };
+  const conversationNames = new Map<string, string>();
+  if (!dbPath) return { conversationToPath, conversationNames };
 
   const knownEncoded = new Map<string, string>();
   const workspaceFolders = readWorkspaceFolderMap(cursorRootFromDb(dbPath));
@@ -551,12 +630,13 @@ export async function buildCursorProjectIndex(
   try {
     tables = await withDb(dbPath, snap => readProjectTables(snap));
   } catch {
-    return { conversationToPath };
+    return { conversationToPath, conversationNames };
   }
 
   for (const path of tables.projects.values()) rememberPath(knownEncoded, path);
   for (const path of tables.cloud.values()) rememberPath(knownEncoded, path);
   for (const header of tables.headers.values()) rememberPath(knownEncoded, header.workspacePath);
+  for (const path of collectNamedFolders(home, knownEncoded).values()) rememberPath(knownEncoded, path);
 
   const assign = (id: string | undefined, raw?: string | null) => {
     if (!id || conversationToPath.has(id)) return;
@@ -564,12 +644,13 @@ export async function buildCursorProjectIndex(
       conversationToPath.set(id, EMPTY_WINDOW);
       return;
     }
-    const path = usableProjectPath(raw);
+    const path = rewriteLegacyProjectPath(raw);
     if (!path) return;
     conversationToPath.set(id, path);
   };
 
   for (const [id, header] of tables.headers) {
+    if (header.name) conversationNames.set(id, header.name);
     assign(id, header.workspacePath);
     assign(id, header.workspaceId ? workspaceFolders.get(header.workspaceId) : undefined);
     if (header.workspaceId === EMPTY_WINDOW) assign(id, EMPTY_WINDOW);
@@ -591,7 +672,11 @@ export async function buildCursorProjectIndex(
     else assign(id, nameFromEncodedCursorProject(encoded, knownEncoded));
   }
 
-  return { conversationToPath };
+  return {
+    conversationToPath,
+    conversationNames,
+    namedFolders: collectNamedFolders(home, knownEncoded),
+  };
 }
 
 function eventDate(event: CursorUsageEvent): string | null {
@@ -644,7 +729,7 @@ export function groupCursorUsageEvents(
       cacheWriteTokens: 0,
       outputTokens: 0,
       reasoningOutputTokens: 0,
-    }, tokens);
+    }, tokens, 1, eventWhen(event) ?? undefined);
   }
 
   return finalize(grouped);
@@ -680,9 +765,11 @@ export async function discoverCursorDates(): Promise<string[]> {
 
 export async function scanCursorDates(
   targetDates: string[],
+  options: { projectAliases?: Record<string, string> } = {},
 ): Promise<Map<string, IngestBreakdown[]>> {
   const events = await loadCursorUsageEvents();
   if (!events) return emptyResult(new Set(targetDates));
   const index = await buildCursorProjectIndex();
+  index.aliases = options.projectAliases;
   return groupCursorUsageEvents(events, targetDates, index);
 }

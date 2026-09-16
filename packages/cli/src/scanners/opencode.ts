@@ -10,6 +10,7 @@ import {
   walkFiles,
   initDateMap,
   accumulate,
+  addHourlyCost,
   finalize,
   emptyResult,
   inferProviderFromModel,
@@ -510,10 +511,15 @@ function addOpenCodeRecord(
       reasoningOutputTokens: 0,
     },
     record.tokens,
+    1,
+    record.timestamp,
   );
 
   const breakdown = dayMap.get(breakdownKey)!;
-  if (record.costUSD > 0) breakdown.costUSD = (breakdown.costUSD ?? 0) + record.costUSD;
+  if (record.costUSD > 0) {
+    breakdown.costUSD = (breakdown.costUSD ?? 0) + record.costUSD;
+    addHourlyCost(dayMap, record.timestamp, breakdownKey, record.costUSD);
+  }
   if (record.sessionId) {
     const sessionKey = `${usageDate}\0${breakdownKey}`;
     const sessions = sessionsByBreakdown.get(sessionKey) ?? new Set<string>();

@@ -6,36 +6,43 @@ import {
   ChartContainer, ChartTooltip, ChartTooltipContent, type ChartConfig,
 } from './ui/chart';
 import type { OverviewPayload } from '../hooks/use-overview';
-import { getChartColors, providerLabel } from '../constants';
-import { formatUsd, formatUsdFull, isHourAxisKey, shortDate, longDate } from '../utils/format';
-import { pivotProviderTrend } from '../utils/data';
+import { getChartColors } from '../constants';
+import { formatModelName, formatUsd, formatUsdFull, isHourAxisKey, shortDate, longDate } from '../utils/format';
+import { OTHER_MODEL_KEY, pivotModelCost } from '../utils/data';
 import { EmptyState, ChartLegend } from './chart-helpers';
 import { useIsDark } from '../hooks/use-dark';
 import type { CurrencyMode } from '../hooks/use-cny-rate';
 
-export function CostTrendChart({
+export function CostCompositionChart({
   data,
-  providerTrend,
+  costComposition,
   currency = 'auto',
+  otherLabel = 'Other',
+  totalLabel = 'Total',
 }: {
   data: OverviewPayload['dailyTrend'];
-  providerTrend: OverviewPayload['providerDailyTrend'];
+  costComposition: OverviewPayload['costComposition'];
   currency?: CurrencyMode;
+  otherLabel?: string;
+  totalLabel?: string;
 }) {
   const isDark = useIsDark();
-  if (!data.length) return <EmptyState label="No data" />;
-
-  const { data: pivoted, providers } = useMemo(
-    () => pivotProviderTrend(data, providerTrend),
-    [data, providerTrend],
+  const { data: pivoted, models } = useMemo(
+    () => pivotModelCost(data, costComposition, { otherLabel }),
+    [data, costComposition, otherLabel],
   );
+
+  if (!data.length || !models.length) return <EmptyState label="No data" />;
 
   const hourly = data.some((row) => isHourAxisKey(row.usageDate));
   const barW = hourly ? 18 : data.length <= 7 ? 94 : data.length <= 30 ? 47 : 20;
   const colors = getChartColors(isDark);
+  const labels = Object.fromEntries(
+    models.map((model) => [model, model === OTHER_MODEL_KEY ? otherLabel : formatModelName(model)]),
+  );
 
   const config = Object.fromEntries(
-    providers.map((p, i) => [p, { label: providerLabel(p), color: colors[i % colors.length] }]),
+    models.map((model, i) => [model, { label: labels[model], color: colors[i % colors.length] }]),
   ) satisfies ChartConfig;
 
   return (
@@ -59,29 +66,31 @@ export function CostTrendChart({
                 <ChartTooltipContent
                   labelFormatter={longDate}
                   formatter={(v) => formatUsdFull(Number(v), currency)}
+                  showTotal
+                  totalLabel={totalLabel}
+                  totalFormatter={(v) => formatUsdFull(v, currency)}
                 />
               }
             />
-            {providers.map((p, i) => (
+            {models.map((model, i) => (
               <Bar
-                key={p}
-                dataKey={p}
-                stackId="cost"
+                key={model}
+                dataKey={model}
+                name={labels[model]}
+                stackId="cost-model"
                 fill={colors[i % colors.length]}
-                radius={i === providers.length - 1 ? [3, 3, 0, 0] : [0, 0, 0, 0]}
+                radius={i === models.length - 1 ? [3, 3, 0, 0] : [0, 0, 0, 0]}
               />
             ))}
           </BarChart>
         </ResponsiveContainer>
       </ChartContainer>
-      {providers.length > 1 && (
-        <ChartLegend
-          items={providers.map((p, i) => ({
-            label: providerLabel(p),
-            color: colors[i % colors.length],
-          }))}
-        />
-      )}
+      <ChartLegend
+        items={models.map((model, i) => ({
+          label: labels[model] ?? model,
+          color: colors[i % colors.length],
+        }))}
+      />
     </>
   );
 }

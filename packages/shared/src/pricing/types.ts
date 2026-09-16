@@ -76,9 +76,18 @@ export interface CostCalcInput {
   cacheWrite5mTokens?: number;
   cacheWrite1hTokens?: number;
   outputTokens: number;
+  reasoningOutputTokens?: number;
 }
 
-export interface CostCalcResult {
+export interface CostParts {
+  inputCostUsd: number;
+  cachedCostUsd: number;
+  cacheWriteCostUsd: number;
+  outputCostUsd: number;
+  reasoningCostUsd: number;
+}
+
+export interface CostCalcResult extends CostParts {
   estimatedCostUsd: number;
   costStatus: CostStatus;
   pricingVersion: string;

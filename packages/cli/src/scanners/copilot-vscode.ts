@@ -83,6 +83,8 @@ export async function scanCopilotVscodeDates(
           reasoningOutputTokens: 0,
         },
         { input: 0, cached: 0, cacheWrite: 0, output: 0, reasoning: 0 },
+        1,
+        event.timestamp,
       );
     }
   }
@@ -226,6 +228,8 @@ async function collectWorkspaceSessionEvents(
         reasoningOutputTokens: 0,
       },
       { input: 0, cached: 0, cacheWrite: 0, output: 0, reasoning: 0 },
+      1,
+      timestamp,
     );
   }
 }
@@ -317,6 +321,8 @@ function addTokenizedWorkspaceRequest(
       reasoningOutputTokens: 0,
     },
     { input, cached: 0, cacheWrite: 0, output, reasoning },
+    1,
+    timestamp,
   );
 }
 

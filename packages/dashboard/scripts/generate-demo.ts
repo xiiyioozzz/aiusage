@@ -134,6 +134,7 @@ async function main() {
 
   const dailyTrend: Array<{ usageDate: string; eventCount: number; estimatedCostUsd: number }> = [];
   const providerDailyTrendMap = new Map<string, number>();
+  const modelDailyCostMap = new Map<string, number>();
   const tokenComposition: Array<{
     usageDate: string;
     inputTokens: number;
@@ -227,6 +228,10 @@ async function main() {
         providerDayKey,
         (providerDailyTrendMap.get(providerDayKey) ?? 0) + estimatedCostUsd,
       );
+      if (breakdown.model && estimatedCostUsd > 0) {
+        const modelDayKey = `${result.usageDate}\u0001${breakdown.model}`;
+        modelDailyCostMap.set(modelDayKey, (modelDailyCostMap.get(modelDayKey) ?? 0) + estimatedCostUsd);
+      }
 
       projectTokens.set(projectName, (projectTokens.get(projectName) ?? 0) + totalTokens);
       flowMap.set(flowKey, (flowMap.get(flowKey) ?? 0) + totalTokens);
@@ -264,6 +269,17 @@ async function main() {
       return { usageDate, provider, estimatedCostUsd: roundUsd(estimatedCostUsd) };
     })
     .sort((a, b) => a.usageDate.localeCompare(b.usageDate) || a.provider.localeCompare(b.provider));
+
+  const costComposition = [...modelDailyCostMap.entries()]
+    .map(([key, estimatedCostUsd]) => {
+      const sep = key.indexOf('\u0001');
+      return {
+        usageDate: key.slice(0, sep),
+        model: key.slice(sep + 1),
+        estimatedCostUsd: roundUsd(estimatedCostUsd),
+      };
+    })
+    .sort((a, b) => a.usageDate.localeCompare(b.usageDate) || b.estimatedCostUsd - a.estimatedCostUsd || a.model.localeCompare(b.model));
 
   const modelCostShare = [...byModel.entries()]
     .map(([key, summary]) => {
@@ -334,6 +350,7 @@ async function main() {
     dailyTrend,
     providerDailyTrend,
     tokenComposition,
+    costComposition,
     modelCostShare,
     channelCostShare,
     sankey: {

@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { parseTs, dateKey, inferProviderFromModel, projectFromPath, resolveProjectFields } from '../utils.js';
+import { parseTs, dateKey, hourOf, inferProviderFromModel, projectFromPath, resolveProjectFields, initDateMap, accumulate, finalize, takeHourly } from '../utils.js';
 
 describe('parseTs', () => {
   it('treats 10-digit numeric values as Unix seconds (not milliseconds)', () => {
@@ -46,6 +46,31 @@ describe('dateKey', () => {
   it('formats local date as YYYY-MM-DD', () => {
     const d = new Date(2026, 5, 2); // 本地 6/2
     expect(dateKey(d)).toBe('2026-06-02');
+  });
+});
+
+describe('hourly accumulate', () => {
+  it('buckets tokens by local hour next to the daily map', () => {
+    const when = new Date(2026, 8, 15, 14, 30, 0);
+    const grouped = initDateMap(new Set(['2026-09-15']));
+    accumulate(grouped.get('2026-09-15')!, 'claude|demo', {
+      provider: 'anthropic',
+      product: 'claude-code',
+      channel: 'cli',
+      model: 'claude',
+      project: 'demo',
+      inputTokens: 0,
+      cachedInputTokens: 0,
+      cacheWriteTokens: 0,
+      outputTokens: 0,
+      reasoningOutputTokens: 0,
+    }, { input: 10, cached: 0, cacheWrite: 0, output: 4, reasoning: 0 }, 1, when);
+
+    const result = finalize(grouped);
+    const hourly = takeHourly(result)?.get('2026-09-15');
+    expect(hourOf(when)).toBe(14);
+    expect(hourly?.get(14)?.get('claude|demo')?.inputTokens).toBe(10);
+    expect(result.get('2026-09-15')?.[0]?.inputTokens).toBe(10);
   });
 });
 

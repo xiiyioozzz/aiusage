@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
+import type { HourlyHeatmapItem } from '@aiusage/shared';
 import type { Locale } from '../i18n';
 import { useIsDark } from '../hooks/use-dark';
 import type { ActivityHeatmapDay } from '../utils/activity-heatmap-data';
@@ -6,25 +7,21 @@ import {
   addCalendarDays,
   computeActivityStreaks,
   countActiveDaysInWindow,
-  weekdayUtc,
+  resolveHeatmapGrid,
+  resolveHeatmapLayout,
 } from '../utils/activity-heatmap-data';
 
-// ── 常量 ──
-
-const CELL = 13;  // 格子固定尺寸 px
-const GAP = 3;    // 间距 px
+const CELL = 13;
+const GAP = 3;
 const STEP = CELL + GAP;
 const DAYS = 7;
 const DAY_LABEL_W = 34;
-const MONTH_LABELS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+const MONTH_LABELS_EN = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+const MONTH_LABELS_ZH = ['1月', '2月', '3月', '4月', '5月', '6月', '7月', '8月', '9月', '10月', '11月', '12月'];
 const GAMMA = 0.7;
 const MONTH_ROW = 22;
 const LEGEND_ROW = 34;
-const MAX_WEEKS = 53;
-// Less(~22px) gap 5格 gap More(~26px)
-const LEGEND_W = 22 + GAP + 5 * STEP - GAP + GAP + 26;
-
-// ── 颜色配置 ──
+const HOUR_LABELS = [0, 6, 12, 18, 23];
 
 const LIGHT_LEVELS = ['#ebedf0', '#9be9a8', '#40c463', '#30a14e', '#216e39'];
 const DARK_LEVELS  = ['#161b22', '#0e4429', '#006d32', '#26a641', '#39d353'];
@@ -39,8 +36,6 @@ function colorForValue(value: number, max: number, isDark: boolean): string {
   return levels[idx];
 }
 
-// ── 数字格式 ──
-
 function fmtCompact(n: number): string {
   if (n >= 1_000_000_000) return `${(n / 1_000_000_000).toFixed(1)}B`;
   if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
@@ -48,13 +43,16 @@ function fmtCompact(n: number): string {
   return String(n);
 }
 
-// ── 监听容器宽度 ──
+function hourActivity(cell: HourlyHeatmapItem | undefined, metricLabel: 'tokens' | 'sessions'): number {
+  if (!cell) return 0;
+  if (metricLabel === 'sessions') return cell.eventCount;
+  return cell.totalTokens > 0 ? cell.totalTokens : cell.eventCount;
+}
 
 function useContainerWidth(ref: React.RefObject<HTMLDivElement | null>): number {
   const [width, setWidth] = useState(0);
   useEffect(() => {
     if (!ref.current) return;
-    // 立即取一次，再监听变化
     setWidth(Math.floor(ref.current.getBoundingClientRect().width));
     const ro = new ResizeObserver(entries => {
       const w = entries[0]?.contentRect.width ?? 0;
@@ -66,11 +64,23 @@ function useContainerWidth(ref: React.RefObject<HTMLDivElement | null>): number 
   return width;
 }
 
-// ── 主组件 ──
-
-export function ActivityHeatmap({ days, today, metricLabel = 'tokens', locale = 'en', className = '' }: {
+export function ActivityHeatmap({
+  days,
+  today,
+  startDate,
+  range = '30d',
+  hourly,
+  nowHour,
+  metricLabel = 'tokens',
+  locale = 'en',
+  className = '',
+}: {
   days: ActivityHeatmapDay[];
   today?: string;
+  startDate?: string;
+  range?: string;
+  hourly?: HourlyHeatmapItem[];
+  nowHour?: number;
   metricLabel?: 'tokens' | 'sessions';
   locale?: Locale;
   className?: string;
@@ -80,35 +90,36 @@ export function ActivityHeatmap({ days, today, metricLabel = 'tokens', locale = 
   const containerRef = useRef<HTMLDivElement>(null);
   const hasAutoScrolledRef = useRef(false);
   const containerWidth = useContainerWidth(containerRef);
-
-  // GitHub 风格：固定展示近一年 53 周，不跟随容器拉伸。
-  const weeks = MAX_WEEKS;
+  const monthLabels = locale === 'zh' ? MONTH_LABELS_ZH : MONTH_LABELS_EN;
+  const layout = resolveHeatmapLayout(range);
 
   const [tooltip, setTooltip] = useState<{
     x: number; y: number;
     date: string; activityValue: number; cost: number;
   } | null>(null);
 
-  const { grid, monthMarks, maxActivity, activeDays, streak, longestStreak, totalActivity } = useMemo(() => {
+  const stats = useMemo(() => {
     const byDate = new Map<string, ActivityHeatmapDay>();
     for (const d of days) byDate.set(d.usageDate, d);
 
-    // Align the right edge to Saturday of the site-timezone week, not the browser clock.
     const todayStr = today
       ?? days.map((day) => day.usageDate).sort().at(-1)
       ?? '1970-01-01';
-    const endStr = addCalendarDays(todayStr, 6 - weekdayUtc(todayStr));
-    const startStr = addCalendarDays(endStr, -(weeks * DAYS - 1));
-    const visibleDays = days.filter((d) => d.usageDate >= startStr && d.usageDate <= todayStr);
+    const rangeStart = startDate && startDate <= todayStr
+      ? startDate
+      : days.map((day) => day.usageDate).sort()[0] ?? todayStr;
+    const { startStr, weeks } = resolveHeatmapGrid(todayStr, rangeStart);
+    const visibleDays = days.filter((d) => d.usageDate >= rangeStart && d.usageDate <= todayStr);
 
     const maxActivity = Math.max(0, ...visibleDays.map(d => d.activityValue));
     const totalActivity = visibleDays.reduce((s, d) => s + d.activityValue, 0);
-    const activeDays = countActiveDaysInWindow(days, startStr, todayStr);
+    const activeDays = countActiveDaysInWindow(days, rangeStart, todayStr);
+    const windowDays = Math.max(1, weeks * DAYS);
 
     const { streak, longestStreak } = computeActivityStreaks(
       days,
       todayStr,
-      weeks * DAYS,
+      windowDays,
     );
 
     const grid: Array<Array<{ dateStr: string; data?: ActivityHeatmapDay }>> = [];
@@ -122,32 +133,55 @@ export function ActivityHeatmap({ days, today, metricLabel = 'tokens', locale = 
       for (let d = 0; d < DAYS; d++) {
         const ds = addCalendarDays(startStr, w * DAYS + d);
         col.push({ dateStr: ds, data: byDate.get(ds) });
-        if (w > 0 && ds.endsWith('-01')) {
+        if (ds >= rangeStart && ds <= todayStr && (ds.endsWith('-01') || (w === 0 && monthToMark === -1 && ds === rangeStart))) {
           monthToMark = Number(ds.slice(5, 7)) - 1;
         }
       }
 
       if (monthToMark !== -1 && monthToMark !== lastMarkedMonth) {
-        monthMarks.push({ weekIdx: w, label: MONTH_LABELS[monthToMark] });
+        monthMarks.push({ weekIdx: w, label: monthLabels[monthToMark] });
         lastMarkedMonth = monthToMark;
       }
 
       grid.push(col);
     }
 
-    return { grid, monthMarks, maxActivity, activeDays, streak, longestStreak, totalActivity };
-  }, [days, today, weeks]);
+    const hourRows: string[] = [];
+    if (layout === 'day-hour') hourRows.push(todayStr);
+    if (layout === 'week-hour') {
+      for (let i = 0; i < 7; i++) hourRows.push(addCalendarDays(rangeStart, i));
+    }
+    const hourlyByKey = new Map<string, HourlyHeatmapItem>();
+    for (const cell of hourly ?? []) hourlyByKey.set(`${cell.usageDate}|${cell.hour}`, cell);
+    const hourValues = hourRows.flatMap((dateStr) =>
+      Array.from({ length: 24 }, (_, hour) => hourActivity(hourlyByKey.get(`${dateStr}|${hour}`), metricLabel)),
+    );
+    const maxHourActivity = Math.max(0, ...hourValues);
+    const totalHourActivity = hourValues.reduce((sum, value) => sum + value, 0);
 
-  // 内容宽度（格子部分，左对齐内坐标）
-  const svgInnerW = weeks * STEP - GAP;
+    return {
+      grid, monthMarks, maxActivity, activeDays, streak, longestStreak, totalActivity, weeks, rangeStart, todayStr,
+      hourRows, hourlyByKey, maxHourActivity, totalHourActivity,
+    };
+  }, [days, today, startDate, monthLabels, layout, hourly, metricLabel]);
+
+  const {
+    grid, monthMarks, maxActivity, activeDays, streak, longestStreak, totalActivity, weeks, rangeStart, todayStr,
+    hourRows, hourlyByKey, maxHourActivity, totalHourActivity,
+  } = stats;
+
+  const cell = CELL;
+  const step = STEP;
+  const svgInnerW = weeks * step - GAP;
   const svgW = DAY_LABEL_W + svgInnerW;
-  const svgH = DAYS * STEP - GAP;
+  const svgH = DAYS * step - GAP;
+  const legendW = 22 + GAP + 5 * step - GAP + GAP + 26;
   const totalH = MONTH_ROW + svgH + LEGEND_ROW;
-  const legendX = Math.max(DAY_LABEL_W, svgW - LEGEND_W);
+  const legendX = Math.max(DAY_LABEL_W, svgW - legendW);
   const tooltipMaxX = Math.max(0, (rootRef.current?.clientWidth ?? containerWidth) - 130);
   let lastMonthLabelX = -Infinity;
   const monthLabelMarks = monthMarks.map((mark) => {
-    const x = Math.max(mark.weekIdx * STEP, lastMonthLabelX + 32);
+    const x = Math.max(mark.weekIdx * step, lastMonthLabelX + 32);
     lastMonthLabelX = x;
     return { ...mark, x };
   });
@@ -158,6 +192,14 @@ export function ActivityHeatmap({ days, today, metricLabel = 'tokens', locale = 
   const totalLabel = locale === 'zh'
     ? `${metricLabel === 'tokens' ? 'tokens' : 'sessions'} total`
     : `${metricLabel} total`;
+  const hourNow = nowHour ?? 23;
+  const hourLayout = layout === 'day-hour' || layout === 'week-hour';
+  const displayTotal = hourLayout ? totalHourActivity : totalActivity;
+  const displayMax = hourLayout ? maxHourActivity : maxActivity;
+
+  useEffect(() => {
+    hasAutoScrolledRef.current = false;
+  }, [startDate, today, weeks, layout]);
 
   useEffect(() => {
     const el = containerRef.current;
@@ -166,7 +208,120 @@ export function ActivityHeatmap({ days, today, metricLabel = 'tokens', locale = 
       el.scrollLeft = el.scrollWidth;
     }
     hasAutoScrolledRef.current = true;
-  }, [containerWidth, svgW]);
+  }, [containerWidth, svgW, startDate, today, weeks, layout]);
+
+  const showHourTooltip = (
+    dateStr: string,
+    hour: number,
+    activityValue: number,
+    cost: number,
+    x: number,
+    y: number,
+  ) => {
+    const scrollLeft = containerRef.current?.scrollLeft ?? 0;
+    const containerRect = containerRef.current?.getBoundingClientRect();
+    const rootRect = rootRef.current?.getBoundingClientRect();
+    const originX = containerRect && rootRect ? containerRect.left - rootRect.left : 0;
+    const originY = containerRect && rootRect ? containerRect.top - rootRect.top : 0;
+    setTooltip({
+      x: originX + x - scrollLeft,
+      y: originY + y,
+      date: `${dateStr} ${String(hour).padStart(2, '0')}:00`,
+      activityValue,
+      cost,
+    });
+  };
+
+  const renderHourGrid = () => {
+    const dateLabelW = layout === 'week-hour' ? 44 : 0;
+    const hourCell = CELL;
+    const hourStep = STEP;
+    const rowH = STEP;
+    const gridW = dateLabelW + 24 * hourStep - GAP;
+    const gridH = hourRows.length * rowH + (layout === 'day-hour' ? 18 : 8);
+    const futureFill = isDark ? 'rgba(22,27,34,0.35)' : 'rgba(235,237,240,0.45)';
+
+    return (
+      <svg width={gridW} height={gridH + LEGEND_ROW} style={{ display: 'block' }} aria-label="Activity heatmap">
+        {hourRows.map((dateStr, row) => (
+          <g key={dateStr} transform={`translate(0, ${row * rowH})`}>
+            {layout === 'week-hour' && (
+              <text
+                x={dateLabelW - 6}
+                y={hourCell / 2}
+                fontSize={10}
+                fill={isDark ? '#8b949e' : '#57606a'}
+                fontFamily="system-ui, sans-serif"
+                textAnchor="end"
+                dominantBaseline="middle"
+              >
+                {dateStr.slice(5)}
+              </text>
+            )}
+            {Array.from({ length: 24 }, (_, hour) => {
+              const cellData = hourlyByKey.get(`${dateStr}|${hour}`);
+              const activityValue = hourActivity(cellData, metricLabel);
+              const future = dateStr === todayStr && hour > hourNow;
+              const fill = future
+                ? futureFill
+                : colorForValue(activityValue, displayMax, isDark);
+              const x = dateLabelW + hour * hourStep;
+              return (
+                <rect
+                  key={`${dateStr}-${hour}`}
+                  x={x}
+                  y={0}
+                  width={hourCell}
+                  height={hourCell}
+                  rx={2}
+                  fill={fill}
+                  stroke={isDark ? DARK_CELL_STROKE : LIGHT_CELL_STROKE}
+                  strokeWidth={1}
+                  opacity={future ? 0.45 : 1}
+                  style={{ cursor: activityValue > 0 ? 'pointer' : 'default' }}
+                  onMouseEnter={() => showHourTooltip(dateStr, hour, activityValue, cellData?.estimatedCostUsd ?? 0, x + hourCell / 2, 0)}
+                  onMouseLeave={() => setTooltip(null)}
+                />
+              );
+            })}
+          </g>
+        ))}
+        {HOUR_LABELS.map((hour) => (
+          <text
+            key={hour}
+            x={dateLabelW + hour * hourStep + hourCell / 2}
+            y={hourRows.length * rowH + 14}
+            fontSize={10}
+            fill={isDark ? '#8b949e' : '#57606a'}
+            fontFamily="system-ui, sans-serif"
+            textAnchor="middle"
+          >
+            {hour}
+          </text>
+        ))}
+        <g transform={`translate(${Math.max(0, gridW - legendW)}, ${gridH + 4})`}>
+          <text x={0} y={10} fontSize={10} fill={isDark ? '#8b949e' : '#57606a'} fontFamily="system-ui, sans-serif">Less</text>
+          {[0, 1, 2, 3, 4].map((lvl) => {
+            const levels = isDark ? DARK_LEVELS : LIGHT_LEVELS;
+            return (
+              <rect
+                key={lvl}
+                x={24 + lvl * step}
+                y={0}
+                width={cell}
+                height={cell}
+                rx={2}
+                fill={levels[lvl]}
+                stroke={isDark ? DARK_CELL_STROKE : LIGHT_CELL_STROKE}
+                strokeWidth={1}
+              />
+            );
+          })}
+          <text x={24 + 5 * step} y={10} fontSize={10} fill={isDark ? '#8b949e' : '#57606a'} fontFamily="system-ui, sans-serif">More</text>
+        </g>
+      </svg>
+    );
+  };
 
   return (
     <div ref={rootRef} className={`relative grid gap-5 lg:grid-cols-[150px_minmax(0,1fr)] lg:items-center ${className}`}>
@@ -186,31 +341,28 @@ export function ActivityHeatmap({ days, today, metricLabel = 'tokens', locale = 
       </div>
 
       <div className="min-w-0">
-        {/* 统计摘要 */}
         <div className="mb-3 flex items-center gap-4 text-xs text-slate-500 dark:text-slate-400">
           <span>
             <span className="font-semibold text-slate-700 dark:text-slate-200">{activeDays}</span> {activeDaysLabel}
           </span>
           <span>
-            <span className="font-semibold text-slate-700 dark:text-slate-200">{fmtCompact(totalActivity)}</span> {totalLabel}
+            <span className="font-semibold text-slate-700 dark:text-slate-200">{fmtCompact(displayTotal)}</span> {totalLabel}
           </span>
         </div>
 
-        {/* SVG 热力图 */}
         <div ref={containerRef} className="scrollbar-hide relative w-full overflow-x-auto pb-1">
-          {containerWidth > 0 && (
+          {containerWidth > 0 && (hourLayout ? renderHourGrid() : (
             <svg
               width={svgW}
               height={totalH}
               style={{ display: 'block' }}
               aria-label="Activity heatmap"
             >
-              {/* 星期标签 */}
               {[1, 3, 5].map((dayIdx) => (
                 <text
                   key={dayIdx}
                   x={DAY_LABEL_W - 6}
-                  y={MONTH_ROW + dayIdx * STEP + CELL / 2}
+                  y={MONTH_ROW + dayIdx * step + cell / 2}
                   fontSize={11}
                   fill={isDark ? '#8b949e' : '#57606a'}
                   fontFamily="system-ui, sans-serif"
@@ -222,7 +374,6 @@ export function ActivityHeatmap({ days, today, metricLabel = 'tokens', locale = 
               ))}
 
               <g transform={`translate(${DAY_LABEL_W}, 0)`}>
-                {/* 月份标签 */}
                 {monthLabelMarks.map(({ weekIdx, label, x }) => (
                   <text
                     key={label + weekIdx}
@@ -236,26 +387,29 @@ export function ActivityHeatmap({ days, today, metricLabel = 'tokens', locale = 
                   </text>
                 ))}
 
-                {/* 格子 */}
                 <g transform={`translate(0, ${MONTH_ROW})`}>
                   {grid.map((col, wi) =>
                     col.map(({ dateStr, data }, di) => {
-                      const activityValue = data?.activityValue ?? 0;
-                      const cost = data?.estimatedCostUsd ?? 0;
-                      const fill = colorForValue(activityValue, maxActivity, isDark);
-                      const x = wi * STEP;
-                      const y = di * STEP;
+                      const inRange = dateStr >= rangeStart && dateStr <= todayStr;
+                      const activityValue = inRange ? (data?.activityValue ?? 0) : 0;
+                      const cost = inRange ? (data?.estimatedCostUsd ?? 0) : 0;
+                      const fill = inRange
+                        ? colorForValue(activityValue, maxActivity, isDark)
+                        : (isDark ? 'rgba(22,27,34,0.35)' : 'rgba(235,237,240,0.45)');
+                      const x = wi * step;
+                      const y = di * step;
                       return (
                         <rect
                           key={dateStr}
                           x={x}
                           y={y}
-                          width={CELL}
-                          height={CELL}
+                          width={cell}
+                          height={cell}
                           rx={2}
                           fill={fill}
                           stroke={isDark ? DARK_CELL_STROKE : LIGHT_CELL_STROKE}
                           strokeWidth={1}
+                          opacity={inRange ? 1 : 0.55}
                           style={{ cursor: activityValue > 0 ? 'pointer' : 'default' }}
                           onMouseEnter={() => {
                             const scrollLeft = containerRef.current?.scrollLeft ?? 0;
@@ -264,7 +418,7 @@ export function ActivityHeatmap({ days, today, metricLabel = 'tokens', locale = 
                             const originX = containerRect && rootRect ? containerRect.left - rootRect.left : 0;
                             const originY = containerRect && rootRect ? containerRect.top - rootRect.top : 0;
                             setTooltip({
-                              x: originX + DAY_LABEL_W + x + CELL / 2 - scrollLeft,
+                              x: originX + DAY_LABEL_W + x + cell / 2 - scrollLeft,
                               y: originY + MONTH_ROW + y,
                               date: dateStr,
                               activityValue,
@@ -279,7 +433,6 @@ export function ActivityHeatmap({ days, today, metricLabel = 'tokens', locale = 
                 </g>
               </g>
 
-              {/* 图例：右下角，贴近 GitHub contribution graph */}
               <g transform={`translate(${legendX}, ${totalH - LEGEND_ROW + 10})`}>
                 <text x={0} y={10} fontSize={10} fill={isDark ? '#8b949e' : '#57606a'} fontFamily="system-ui, sans-serif">Less</text>
                 {[0, 1, 2, 3, 4].map((lvl) => {
@@ -287,10 +440,10 @@ export function ActivityHeatmap({ days, today, metricLabel = 'tokens', locale = 
                   return (
                     <rect
                       key={lvl}
-                      x={24 + lvl * STEP}
+                      x={24 + lvl * step}
                       y={0}
-                      width={CELL}
-                      height={CELL}
+                      width={cell}
+                      height={cell}
                       rx={2}
                       fill={levels[lvl]}
                       stroke={isDark ? DARK_CELL_STROKE : LIGHT_CELL_STROKE}
@@ -298,15 +451,13 @@ export function ActivityHeatmap({ days, today, metricLabel = 'tokens', locale = 
                     />
                   );
                 })}
-                <text x={24 + 5 * STEP} y={10} fontSize={10} fill={isDark ? '#8b949e' : '#57606a'} fontFamily="system-ui, sans-serif">More</text>
+                <text x={24 + 5 * step} y={10} fontSize={10} fill={isDark ? '#8b949e' : '#57606a'} fontFamily="system-ui, sans-serif">More</text>
               </g>
             </svg>
-          )}
-
+          ))}
         </div>
       </div>
 
-      {/* Tooltip */}
       {tooltip && (
         <div
           className="pointer-events-none absolute z-50 rounded-md border border-slate-200 bg-white px-2.5 py-1.5 text-xs shadow-md dark:border-slate-700 dark:bg-[#1a1a1a]"
@@ -329,9 +480,8 @@ export function ActivityHeatmap({ days, today, metricLabel = 'tokens', locale = 
         </div>
       )}
 
-      {/* 空状态 */}
       {days.length === 0 && (
-        <p className="text-xs text-slate-400 dark:text-slate-500">No activity data in the past year.</p>
+        <p className="text-xs text-slate-400 dark:text-slate-500">No activity data in this range.</p>
       )}
     </div>
   );

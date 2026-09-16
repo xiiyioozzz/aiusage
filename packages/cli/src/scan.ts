@@ -15,11 +15,13 @@ import { scanOpencodeDates } from './scanners/opencode.js';
 import { scanPiDates } from './scanners/pi.js';
 import { scanTraeDates } from './scanners/trae.js';
 
-import type { IngestBreakdown } from '@aiusage/shared';
+import type { IngestBreakdown, IngestHourlyBucket } from '@aiusage/shared';
+import { mergeHourlyResults, takeHourly } from './scanners/utils.js';
 
 export interface ScanResult {
   usageDate: string;
   breakdowns: IngestBreakdown[];
+  hourly?: IngestHourlyBucket[];
   totals: {
     eventCount: number;
     inputTokens: number;
@@ -92,9 +94,10 @@ export function parseToolSelection(value: string | boolean | undefined, zh = fal
 
 export async function scanDate(targetDate: string, options: ScanOptions = {}): Promise<ScanResult> {
   const [result] = await scanDates([targetDate], options);
-  return result ?? {
+    return result ?? {
     usageDate: targetDate,
     breakdowns: [],
+    hourly: [],
     totals: createEmptyTotals(),
   };
 }
@@ -110,7 +113,7 @@ export async function scanDates(targetDates: string[], options: ScanOptions = {}
     { products: ['codex'], scan: () => scanCodexDates(uniqueDates, undefined, options.projectAliases) },
     { products: ['copilot-cli'], scan: () => scanCopilotDates(uniqueDates, undefined, options.projectAliases) },
     { products: ['copilot-vscode'], scan: () => scanCopilotVscodeDates(uniqueDates, undefined, options.projectAliases) },
-    { products: ['cursor'], scan: () => scanCursorDates(uniqueDates) },
+    { products: ['cursor'], scan: () => scanCursorDates(uniqueDates, { projectAliases: options.projectAliases }) },
     { products: ['kiro'], scan: () => scanKiroDates(uniqueDates, undefined, options.projectAliases, { proxyDataDirs: options.kiroProxyDataDirs }) },
     { products: ['hermes'], scan: () => scanHermesDates(uniqueDates, { projectAliases: options.projectAliases }) },
     { products: ['gemini-cli'], scan: () => scanGeminiDates(uniqueDates, undefined, options.projectAliases) },
@@ -137,6 +140,8 @@ export async function scanDates(targetDates: string[], options: ScanOptions = {}
     .map(definition => definition.scan());
 
   const results = await Promise.all(scanners);
+  const hourlyMerged = new Map<string, IngestBreakdown[]>();
+  mergeHourlyResults(hourlyMerged, results);
 
   return uniqueDates.map((usageDate) => {
     const breakdowns = results
@@ -153,9 +158,24 @@ export async function scanDates(targetDates: string[], options: ScanOptions = {}
       }),
       createEmptyTotals(),
     );
+    const hourly = serializeHourly(takeHourly(hourlyMerged)?.get(usageDate), selected);
 
-    return { usageDate, breakdowns, totals };
+    return { usageDate, breakdowns, hourly, totals };
   });
+}
+
+function serializeHourly(
+  byHour: Map<number, Map<string, IngestBreakdown>> | undefined,
+  selected: Set<string> | undefined,
+): IngestHourlyBucket[] {
+  if (!byHour?.size) return [];
+  return [...byHour.entries()]
+    .sort((a, b) => a[0] - b[0])
+    .map(([hour, grouped]) => ({
+      hour,
+      breakdowns: [...grouped.values()].filter(breakdown => !selected || selected.has(breakdown.product)),
+    }))
+    .filter(bucket => bucket.breakdowns.length > 0);
 }
 
 function createEmptyTotals(): ScanResult['totals'] {

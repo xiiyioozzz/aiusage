@@ -403,9 +403,16 @@ async function runSync(flags: Record<string, string | boolean>, positionals: str
   const activityByDate = buildActivityPayloadByDate(activityReport.items, visibility);
   const allDays: IngestDay[] = targetDates
     .map((usageDate) => {
-      const breakdowns = applyPrivacy(resultsByDate.get(usageDate)?.breakdowns ?? [], visibility);
+      const result = resultsByDate.get(usageDate);
+      const breakdowns = applyPrivacy(result?.breakdowns ?? [], visibility);
+      const hourly = (result?.hourly ?? [])
+        .map((bucket) => ({
+          hour: bucket.hour,
+          breakdowns: applyPrivacy(bucket.breakdowns, visibility),
+        }))
+        .filter((bucket) => bucket.breakdowns.length > 0);
       const activity = activityByDate.get(usageDate);
-      return { usageDate, breakdowns, activity };
+      return { usageDate, breakdowns, hourly, activity };
     })
     .filter(day => day.breakdowns.length > 0 || (day.activity?.items.length ?? 0) > 0);
 

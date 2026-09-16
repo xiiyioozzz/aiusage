@@ -4,6 +4,9 @@ import {
   buildActivityHeatmapData,
   computeActivityStreaks,
   countActiveDaysInWindow,
+  resolveHeatmapGrid,
+  resolveHeatmapLayout,
+  resolveRangeStart,
 } from './activity-heatmap-data';
 
 test('uses daily event counts for event-only products when token data is unavailable', () => {
@@ -92,4 +95,27 @@ test('resets the current streak after a missed full day', () => {
     streak: 0,
     longestStreak: 2,
   });
+});
+
+test('resolves calendar-year and month starts from the site today', () => {
+  assert.equal(resolveRangeStart('year', '2026-09-15'), '2026-01-01');
+  assert.equal(resolveRangeStart('month', '2026-09-15'), '2026-09-01');
+  assert.equal(resolveRangeStart('7d', '2026-09-15'), '2026-09-09');
+  assert.equal(resolveRangeStart('all', '2026-09-15', '2026-02-21'), '2026-02-21');
+});
+
+test('aligns the heatmap grid to Sunday-Saturday weeks for this year', () => {
+  const grid = resolveHeatmapGrid('2026-09-15', '2026-01-01');
+  assert.equal(grid.startStr, '2025-12-28');
+  assert.equal(grid.endStr, '2026-09-19');
+  assert.equal(grid.weeks, 38);
+});
+
+test('switches heatmap grain by range', () => {
+  assert.equal(resolveHeatmapLayout('today'), 'day-hour');
+  assert.equal(resolveHeatmapLayout('7d'), 'week-hour');
+  assert.equal(resolveHeatmapLayout('month'), 'calendar');
+  assert.equal(resolveHeatmapLayout('30d'), 'calendar');
+  assert.equal(resolveHeatmapLayout('year'), 'calendar');
+  assert.equal(resolveHeatmapLayout('all'), 'calendar');
 });

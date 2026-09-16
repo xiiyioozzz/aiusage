@@ -103,6 +103,8 @@ export async function scanGeminiDates(
           reasoningOutputTokens: 0,
         },
         event.tokens,
+        1,
+        event.timestamp,
       );
     }
   }
@@ -336,6 +338,8 @@ async function collectGeminiLogEvents(
         cacheWriteTokens: 0, outputTokens: 0, reasoningOutputTokens: 0,
       },
       { input: 0, cached: 0, cacheWrite: 0, output: 0, reasoning: 0 },
+      1,
+      ts,
     );
   }
 }

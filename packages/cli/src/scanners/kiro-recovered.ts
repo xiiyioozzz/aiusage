@@ -130,7 +130,7 @@ function addHermesRows(
       cacheWrite: row.cacheWrite,
       output: row.output,
       reasoning: row.reasoning,
-    }, row.events);
+    }, row.events, row.when);
   }
 }
 

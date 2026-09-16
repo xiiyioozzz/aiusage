@@ -4,7 +4,19 @@ import { basename, join } from 'node:path';
 import { homedir } from 'node:os';
 import { createInterface } from 'node:readline';
 import { calculateCost, type IngestBreakdown } from '@aiusage/shared';
-import { fileModifiedTs, normalizeModelName, runWithConcurrency, resolveProjectFields, type ProjectFields } from './utils.js';
+import {
+  addHourly,
+  emptyResult,
+  fileModifiedTs,
+  finalize,
+  initDateMap,
+  normalizeModelName,
+  patchHourly,
+  runWithConcurrency,
+  resolveProjectFields,
+  type DateGrouped,
+  type ProjectFields,
+} from './utils.js';
 
 const FILE_CONCURRENCY = 16;
 const MAX_LINE_BYTES = 64 * 1024 * 1024; // 64 MB
@@ -72,6 +84,7 @@ interface CodexFileState {
 
 interface CodexUsageEvent {
   usageDate: string;
+  when: Date;
   signature: string;
   model: string;
   projectFields: ProjectFields;
@@ -99,15 +112,14 @@ export async function scanCodexDates(
   projectAliases?: Record<string, string>,
 ): Promise<Map<string, IngestBreakdown[]>> {
   const targetDateSet = new Set(targetDates);
-  const groupedByDate = new Map<string, Map<string, IngestBreakdown>>();
-  for (const targetDate of targetDateSet) groupedByDate.set(targetDate, new Map());
+  const groupedByDate = initDateMap(targetDateSet);
 
   const baseDir = codexDir ?? join(homedir(), '.codex');
   const serviceTier = await detectCodexServiceTier(baseDir);
 
   const sessionFiles = await collectSessionFiles(baseDir);
   if (sessionFiles.length === 0) {
-    return new Map([...targetDateSet].map((targetDate) => [targetDate, []]));
+    return emptyResult(targetDateSet);
   }
 
   // 文件并发解析、按稳定路径顺序合并：既保留扫描速度，也让 fork 重放的
@@ -128,9 +140,7 @@ export async function scanCodexDates(
     }
   }
 
-  return new Map(
-    [...groupedByDate.entries()].map(([usageDate, grouped]) => [usageDate, [...grouped.values()]]),
-  );
+  return finalize(groupedByDate);
 }
 
 /** 流式逐行读取单个 Codex JSONL 文件 */
@@ -287,6 +297,7 @@ async function processCodexFile(
       const exactEventCost = eventCost.costStatus === 'exact' ? eventCost.estimatedCostUsd : undefined;
       events.push({
         usageDate,
+        when: ts,
         signature,
         model: state.currentModel,
         projectFields: { ...state.projectFields },
@@ -308,7 +319,7 @@ async function processCodexFile(
 }
 
 function mergeCodexEvent(
-  groupedByDate: Map<string, Map<string, IngestBreakdown>>,
+  groupedByDate: DateGrouped,
   event: CodexUsageEvent,
 ): void {
   const grouped = groupedByDate.get(event.usageDate);
@@ -326,10 +337,30 @@ function mergeCodexEvent(
       existing.costUSD = (existing.costUSD ?? 0) + event.costUSD;
       existing.pricingVersion = event.pricingVersion;
     }
-    return;
+  } else {
+    const breakdown: IngestBreakdown = {
+      provider: 'openai',
+      product: 'codex',
+      channel: 'cli',
+      model: event.model,
+      project: event.projectFields.project,
+      projectDisplay: event.projectFields.projectDisplay,
+      projectAlias: event.projectFields.projectAlias,
+      eventCount: 1,
+      inputTokens: event.inputTokens,
+      cachedInputTokens: event.cachedInputTokens,
+      cacheWriteTokens: event.cacheWriteTokens,
+      outputTokens: event.outputTokens,
+      reasoningOutputTokens: event.reasoningOutputTokens,
+    };
+    if (event.costUSD !== undefined) {
+      breakdown.costUSD = event.costUSD;
+      breakdown.pricingVersion = event.pricingVersion;
+    }
+    grouped.set(key, breakdown);
   }
 
-  const breakdown: IngestBreakdown = {
+  addHourly(groupedByDate, event.when, key, {
     provider: 'openai',
     product: 'codex',
     channel: 'cli',
@@ -337,18 +368,21 @@ function mergeCodexEvent(
     project: event.projectFields.project,
     projectDisplay: event.projectFields.projectDisplay,
     projectAlias: event.projectFields.projectAlias,
-    eventCount: 1,
-    inputTokens: event.inputTokens,
-    cachedInputTokens: event.cachedInputTokens,
-    cacheWriteTokens: event.cacheWriteTokens,
-    outputTokens: event.outputTokens,
-    reasoningOutputTokens: event.reasoningOutputTokens,
-  };
+    inputTokens: 0,
+    cachedInputTokens: 0,
+    cacheWriteTokens: 0,
+    outputTokens: 0,
+    reasoningOutputTokens: 0,
+  }, {
+    input: event.inputTokens,
+    cached: event.cachedInputTokens,
+    cacheWrite: event.cacheWriteTokens,
+    output: event.outputTokens,
+    reasoning: event.reasoningOutputTokens,
+  });
   if (event.costUSD !== undefined) {
-    breakdown.costUSD = event.costUSD;
-    breakdown.pricingVersion = event.pricingVersion;
+    patchHourly(groupedByDate, event.when, key, { costUSD: event.costUSD });
   }
-  grouped.set(key, breakdown);
 }
 
 function forkParentFromSource(source: unknown): string | undefined {

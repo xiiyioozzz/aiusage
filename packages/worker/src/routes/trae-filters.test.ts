@@ -49,7 +49,9 @@ describe('Trae dashboard filters', () => {
     expect(calls).toHaveLength(2);
     for (const call of calls) {
       expect(call.sql).toContain('b.product IN (?, ?, ?)');
-      expect(call.params.slice(1, 4)).toEqual(['trae', 'trae-cn', 'trae-intl']);
+      expect(call.sql).toContain('b.usage_date >= ?');
+      expect(call.sql).toContain('b.usage_date <= ?');
+      expect(call.params).toEqual(expect.arrayContaining(['trae', 'trae-cn', 'trae-intl']));
     }
   });
 });

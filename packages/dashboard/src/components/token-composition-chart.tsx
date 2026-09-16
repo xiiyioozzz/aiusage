@@ -7,14 +7,15 @@ import {
 import type { OverviewPayload } from '../hooks/use-overview';
 import type { Locale } from '../i18n';
 import { TOKEN_SERIES, getTokenConfig, getTokenColor } from '../constants';
-import { formatCompact, formatTokens, shortDate, longDate } from '../utils/format';
+import { formatCompact, formatTokens, isHourAxisKey, shortDate, longDate } from '../utils/format';
 import { EmptyState } from './chart-helpers';
 import { useIsDark } from '../hooks/use-dark';
 
 export function TokenCompositionChart({ data, locale, totalLabel }: { data: OverviewPayload['tokenComposition']; locale: Locale; totalLabel?: string }) {
   const isDark = useIsDark();
   if (!data.length) return <EmptyState label="No data" />;
-  const barW = data.length <= 7 ? 94 : data.length <= 30 ? 47 : 20;
+  const hourly = data.some((row) => isHourAxisKey(row.usageDate));
+  const barW = hourly ? 18 : data.length <= 7 ? 94 : data.length <= 30 ? 47 : 20;
   return (
     <ChartContainer config={getTokenConfig(isDark)} className="h-[280px] w-full">
       <ResponsiveContainer width="100%" height="100%">

@@ -136,6 +136,8 @@ export async function scanCopilotDates(
             reasoningOutputTokens: 0,
           },
           { input, cached: cacheRead, cacheWrite, output, reasoning },
+          1,
+          ts,
         );
       }
     }
@@ -164,6 +166,8 @@ export async function scanCopilotDates(
           reasoningOutputTokens: 0,
         },
         candidate.tokens,
+        1,
+        candidate.timestamp,
       );
     }
   }

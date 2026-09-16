@@ -91,19 +91,36 @@ async function walk(dir: string, ext: string, out: string[]): Promise<void> {
 }
 
 export type DateGrouped = Map<string, Map<string, IngestBreakdown>>;
+export type HourGrouped = Map<string, Map<number, Map<string, IngestBreakdown>>>;
+
+const hourlyByGroup = new WeakMap<Map<string, IngestBreakdown>, HourGrouped>();
+const hourlyByDateMap = new WeakMap<DateGrouped, HourGrouped>();
+const hourlyByResult = new WeakMap<Map<string, IngestBreakdown[]>, HourGrouped>();
+
+export function hourOf(date: Date): number {
+  return date.getHours();
+}
 
 export function initDateMap(dates: Set<string>): DateGrouped {
+  const hourly: HourGrouped = new Map();
   const m: DateGrouped = new Map();
-  for (const d of dates) m.set(d, new Map());
+  for (const d of dates) {
+    const inner = new Map<string, IngestBreakdown>();
+    hourlyByGroup.set(inner, hourly);
+    m.set(d, inner);
+  }
+  hourlyByDateMap.set(m, hourly);
   return m;
 }
 
-export function accumulate(
+type TokenDelta = { input: number; cached: number; cacheWrite: number; output: number; reasoning: number };
+
+function applyAccumulate(
   grouped: Map<string, IngestBreakdown>,
   key: string,
   base: Omit<IngestBreakdown, 'eventCount'>,
-  tokens: { input: number; cached: number; cacheWrite: number; output: number; reasoning: number },
-  events = 1,
+  tokens: TokenDelta,
+  events: number,
 ): void {
   const eventCount = Math.max(1, Math.round(events));
   const existing = grouped.get(key);
@@ -114,27 +131,165 @@ export function accumulate(
     existing.cacheWriteTokens += tokens.cacheWrite;
     existing.outputTokens += tokens.output;
     existing.reasoningOutputTokens += tokens.reasoning;
-  } else {
-    grouped.set(key, {
-      ...base,
-      eventCount,
-      inputTokens: tokens.input,
-      cachedInputTokens: tokens.cached,
-      cacheWriteTokens: tokens.cacheWrite,
-      outputTokens: tokens.output,
-      reasoningOutputTokens: tokens.reasoning,
-    });
+    return;
   }
+  grouped.set(key, {
+    ...base,
+    eventCount,
+    inputTokens: tokens.input,
+    cachedInputTokens: tokens.cached,
+    cacheWriteTokens: tokens.cacheWrite,
+    outputTokens: tokens.output,
+    reasoningOutputTokens: tokens.reasoning,
+  });
+}
+
+function ensureHourBucket(hourly: HourGrouped, date: string, hour: number): Map<string, IngestBreakdown> {
+  let byHour = hourly.get(date);
+  if (!byHour) {
+    byHour = new Map();
+    hourly.set(date, byHour);
+  }
+  let byKey = byHour.get(hour);
+  if (!byKey) {
+    byKey = new Map();
+    byHour.set(hour, byKey);
+  }
+  return byKey;
+}
+
+function writeHourly(
+  hourly: HourGrouped | undefined,
+  when: Date,
+  key: string,
+  base: Omit<IngestBreakdown, 'eventCount'>,
+  tokens: TokenDelta,
+  events: number,
+): void {
+  if (!hourly) return;
+  const hour = hourOf(when);
+  if (hour < 0 || hour > 23) return;
+  applyAccumulate(ensureHourBucket(hourly, dateKey(when), hour), key, base, tokens, events);
+}
+
+export function accumulate(
+  grouped: Map<string, IngestBreakdown>,
+  key: string,
+  base: Omit<IngestBreakdown, 'eventCount'>,
+  tokens: TokenDelta,
+  events = 1,
+  when?: Date,
+): void {
+  applyAccumulate(grouped, key, base, tokens, events);
+  if (when) writeHourly(hourlyByGroup.get(grouped), when, key, base, tokens, events);
+}
+
+/** Hourly write for scanners that keep a custom daily merge (Claude / Codex). */
+export function addHourly(
+  dateGrouped: DateGrouped,
+  when: Date,
+  key: string,
+  base: Omit<IngestBreakdown, 'eventCount'>,
+  tokens: TokenDelta,
+  events = 1,
+): void {
+  writeHourly(hourlyByDateMap.get(dateGrouped), when, key, base, tokens, events);
+}
+
+export function patchHourly(
+  dateGrouped: DateGrouped,
+  when: Date,
+  key: string,
+  patch: { cacheWrite5mTokens?: number; cacheWrite1hTokens?: number; costUSD?: number },
+): void {
+  const row = hourlyByDateMap.get(dateGrouped)?.get(dateKey(when))?.get(hourOf(when))?.get(key);
+  if (!row) return;
+  if (patch.cacheWrite5mTokens) {
+    row.cacheWrite5mTokens = (row.cacheWrite5mTokens ?? 0) + patch.cacheWrite5mTokens;
+  }
+  if (patch.cacheWrite1hTokens) {
+    row.cacheWrite1hTokens = (row.cacheWrite1hTokens ?? 0) + patch.cacheWrite1hTokens;
+  }
+  if (patch.costUSD) row.costUSD = (row.costUSD ?? 0) + patch.costUSD;
+}
+
+export function addHourlyCost(
+  grouped: Map<string, IngestBreakdown>,
+  when: Date,
+  key: string,
+  costUSD: number,
+): void {
+  if (!(costUSD > 0)) return;
+  const hourly = hourlyByGroup.get(grouped);
+  const row = hourly?.get(dateKey(when))?.get(hourOf(when))?.get(key);
+  if (row) row.costUSD = (row.costUSD ?? 0) + costUSD;
 }
 
 export function finalize(groupedByDate: DateGrouped): Map<string, IngestBreakdown[]> {
-  return new Map(
+  const result = new Map(
     [...groupedByDate.entries()].map(([d, m]) => [d, [...m.values()]]),
   );
+  const hourly = hourlyByDateMap.get(groupedByDate);
+  if (hourly) hourlyByResult.set(result, hourly);
+  return result;
 }
 
 export function emptyResult(dates: Set<string>): Map<string, IngestBreakdown[]> {
-  return new Map([...dates].map(d => [d, []]));
+  const result = new Map([...dates].map(d => [d, []]));
+  hourlyByResult.set(result, new Map());
+  return result;
+}
+
+export function takeHourly(result: Map<string, IngestBreakdown[]>): HourGrouped | undefined {
+  return hourlyByResult.get(result);
+}
+
+function mergeBreakdown(target: IngestBreakdown, incoming: IngestBreakdown): void {
+  target.eventCount += incoming.eventCount;
+  target.inputTokens += incoming.inputTokens;
+  target.cachedInputTokens += incoming.cachedInputTokens;
+  target.cacheWriteTokens += incoming.cacheWriteTokens;
+  target.outputTokens += incoming.outputTokens;
+  target.reasoningOutputTokens += incoming.reasoningOutputTokens;
+  if (incoming.cacheWrite5mTokens) {
+    target.cacheWrite5mTokens = (target.cacheWrite5mTokens ?? 0) + incoming.cacheWrite5mTokens;
+  }
+  if (incoming.cacheWrite1hTokens) {
+    target.cacheWrite1hTokens = (target.cacheWrite1hTokens ?? 0) + incoming.cacheWrite1hTokens;
+  }
+  if (incoming.costUSD) target.costUSD = (target.costUSD ?? 0) + incoming.costUSD;
+  if (incoming.sessionCount) target.sessionCount = (target.sessionCount ?? 0) + incoming.sessionCount;
+}
+
+export function mergeHourlyResults(
+  target: Map<string, IngestBreakdown[]>,
+  sources: Array<Map<string, IngestBreakdown[]>>,
+): void {
+  const dest: HourGrouped = hourlyByResult.get(target) ?? new Map();
+  for (const source of sources) {
+    const hourly = hourlyByResult.get(source);
+    if (!hourly) continue;
+    for (const [date, hours] of hourly) {
+      let destHours = dest.get(date);
+      if (!destHours) {
+        destHours = new Map();
+        dest.set(date, destHours);
+      }
+      for (const [hour, breakdowns] of hours) {
+        let destKeys = destHours.get(hour);
+        if (!destKeys) {
+          destKeys = new Map();
+          destHours.set(hour, destKeys);
+        }
+        for (const [key, incoming] of breakdowns) {
+          const existing = destKeys.get(key);
+          if (existing) mergeBreakdown(existing, incoming);
+          else destKeys.set(key, { ...incoming });
+        }
+      }
+    }
+  }
+  hourlyByResult.set(target, dest);
 }
 
 // 归一化模型名，去掉日期后缀（如 claude-3-5-sonnet-20241022 → claude-3-5-sonnet）

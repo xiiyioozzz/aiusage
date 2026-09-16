@@ -4,7 +4,17 @@ import { join } from 'node:path';
 import { homedir } from 'node:os';
 import { createInterface } from 'node:readline';
 import type { IngestBreakdown } from '@aiusage/shared';
-import { inferProviderFromModel, normalizeModelName, runWithConcurrency, type ProjectFields } from './utils.js';
+import {
+  addHourly,
+  inferProviderFromModel,
+  initDateMap,
+  finalize,
+  normalizeModelName,
+  patchHourly,
+  runWithConcurrency,
+  type DateGrouped,
+  type ProjectFields,
+} from './utils.js';
 
 const FILE_CONCURRENCY = 16;
 const MAX_LINE_BYTES = 64 * 1024 * 1024; // 64 MB
@@ -152,8 +162,7 @@ export async function scanClaudeDates(
   projectAliases?: Record<string, string>,
 ): Promise<Map<string, IngestBreakdown[]>> {
   const targetDateSet = new Set(targetDates);
-  const groupedByDate = new Map<string, Map<string, IngestBreakdown>>();
-  for (const targetDate of targetDateSet) groupedByDate.set(targetDate, new Map());
+  const groupedByDate = initDateMap(targetDateSet);
 
   const baseDirs = await discoverClaudeProjectDirs(claudeDir);
 
@@ -206,9 +215,7 @@ export async function scanClaudeDates(
     }
   }
 
-  return new Map(
-    [...groupedByDate.entries()].map(([usageDate, grouped]) => [usageDate, [...grouped.values()]]),
-  );
+  return finalize(groupedByDate);
 }
 
 /** 流式逐行读取单个 JSONL 文件，避免全量加载到内存 */
@@ -217,7 +224,7 @@ async function processJsonlFile(
   fallbackFields: ProjectFields,
   targetDateSet: Set<string>,
   projectAliases: Record<string, string> | undefined,
-  groupedByDate: Map<string, Map<string, IngestBreakdown>>,
+  groupedByDate: DateGrouped,
   processedHashes: Map<string, ClaudeSeenUsage>,
   sessionSets: Map<string, Set<string>>,
 ): Promise<void> {
@@ -337,6 +344,32 @@ async function processJsonlFile(
         grouped.set(key, breakdown);
         if (hash) processedHashes.set(hash, { breakdown, snapshot });
       }
+
+      addHourly(groupedByDate, ts, key, {
+        provider,
+        product: 'claude-code',
+        channel: 'cli',
+        model,
+        project: recordFields.project,
+        projectDisplay: recordFields.projectDisplay,
+        projectAlias: recordFields.projectAlias,
+        inputTokens: 0,
+        cachedInputTokens: 0,
+        cacheWriteTokens: 0,
+        outputTokens: 0,
+        reasoningOutputTokens: 0,
+      }, {
+        input: snapshot.input,
+        cached: snapshot.cached,
+        cacheWrite: cacheWriteTokens,
+        output: snapshot.output,
+        reasoning: 0,
+      });
+      patchHourly(groupedByDate, ts, key, {
+        cacheWrite5mTokens: snapshot.cache5m,
+        cacheWrite1hTokens: snapshot.cache1h,
+        costUSD: snapshot.costUSD,
+      });
     }
   } catch {
     // 文件在扫描期间被移动、归档或损坏时跳过该文件。

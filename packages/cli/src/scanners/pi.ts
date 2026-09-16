@@ -147,6 +147,8 @@ export async function scanPiDates(
           reasoningOutputTokens: 0,
         },
         { input, cached, cacheWrite, output, reasoning: 0 },
+        1,
+        ts,
       );
     }
   }

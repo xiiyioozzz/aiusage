@@ -277,6 +277,8 @@ function addUsage(
       output: usage.output,
       reasoning: 0,
     },
+    1,
+    usage.timestamp,
   );
 
   const sessionKey = `${usageDate}|${breakdownKey}`;

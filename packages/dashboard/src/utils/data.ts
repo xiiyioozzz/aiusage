@@ -1,5 +1,15 @@
-import { datesFromMonthStartThrough, type SankeyGraph } from '@aiusage/shared';
+import {
+  datesFromMonthStartThrough,
+  type CostCompositionItem,
+  type HourlyCostCompositionItem,
+  type HourlyProviderTrendItem,
+  type HourlyTokenCompositionItem,
+  type HourlyTrendItem,
+  type SankeyGraph,
+  type TokenCompositionItem,
+} from '@aiusage/shared';
 import type { OverviewPayload, FiltersState } from '../hooks/use-overview';
+import { foldRankedSlices } from './fold';
 
 /** Filter overview data to the current site-timezone month and pad empty days with zeros. */
 export function padMonth(ov: OverviewPayload): OverviewPayload {
@@ -45,6 +55,9 @@ export function padMonth(ov: OverviewPayload): OverviewPayload {
   const providerDailyTrend = (ov.providerDailyTrend ?? []).filter(
     (item) => monthDateSet.has(item.usageDate),
   );
+  const costComposition = (ov.costComposition ?? []).filter(
+    (item) => monthDateSet.has(item.usageDate),
+  );
 
   return {
     ...ov,
@@ -56,6 +69,7 @@ export function padMonth(ov: OverviewPayload): OverviewPayload {
     dailyTrend,
     providerDailyTrend,
     tokenComposition,
+    costComposition,
     modelCostShare: scaleShares(ov.modelCostShare),
     channelCostShare: scaleShares(ov.channelCostShare),
     sankey,
@@ -176,6 +190,119 @@ export function transformSankey(input?: SankeyGraph, otherLabel = 'Other') {
   return finalLinks.length ? { nodes: nodeList, links: finalLinks } : null;
 }
 
+export function hourAxisKey(usageDate: string, hour: number): string {
+  return `${usageDate}T${String(hour).padStart(2, '0')}`;
+}
+
+export function resolveChartAxis(range: string): 'day' | 'hour' {
+  return range === 'today' || range === '1d' ? 'hour' : 'day';
+}
+
+function padHours(nowHour: number): number[] {
+  const last = Math.min(23, Math.max(0, Math.trunc(nowHour)));
+  return Array.from({ length: last + 1 }, (_, hour) => hour);
+}
+
+export function toHourlyDailyTrend(
+  today: string,
+  nowHour: number,
+  hourly: HourlyTrendItem[] | undefined,
+): OverviewPayload['dailyTrend'] {
+  const byHour = new Map((hourly ?? []).filter((row) => row.usageDate === today).map((row) => [row.hour, row]));
+  return padHours(nowHour).map((hour) => {
+    const row = byHour.get(hour);
+    return {
+      usageDate: hourAxisKey(today, hour),
+      eventCount: row?.eventCount ?? 0,
+      estimatedCostUsd: row?.estimatedCostUsd ?? 0,
+    };
+  });
+}
+
+export function toHourlyProviderTrend(
+  today: string,
+  nowHour: number,
+  hourly: HourlyProviderTrendItem[] | undefined,
+): OverviewPayload['providerDailyTrend'] {
+  return (hourly ?? [])
+    .filter((row) => row.usageDate === today && row.hour <= nowHour)
+    .map((row) => ({
+      usageDate: hourAxisKey(row.usageDate, row.hour),
+      provider: row.provider,
+      estimatedCostUsd: row.estimatedCostUsd,
+    }));
+}
+
+export function toHourlyTokenComposition(
+  today: string,
+  nowHour: number,
+  hourly: HourlyTokenCompositionItem[] | undefined,
+): TokenCompositionItem[] {
+  const empty = {
+    inputTokens: 0,
+    cachedInputTokens: 0,
+    cacheWriteTokens: 0,
+    outputTokens: 0,
+    reasoningOutputTokens: 0,
+    totalTokens: 0,
+  };
+  const byHour = new Map((hourly ?? []).filter((row) => row.usageDate === today).map((row) => [row.hour, row]));
+  return padHours(nowHour).map((hour) => {
+    const row = byHour.get(hour);
+    return {
+      usageDate: hourAxisKey(today, hour),
+      ...(row
+        ? {
+            inputTokens: row.inputTokens,
+            cachedInputTokens: row.cachedInputTokens,
+            cacheWriteTokens: row.cacheWriteTokens,
+            outputTokens: row.outputTokens,
+            reasoningOutputTokens: row.reasoningOutputTokens,
+            totalTokens: row.totalTokens,
+          }
+        : empty),
+    };
+  });
+}
+
+export function selectChartSeries(ov: OverviewPayload | null, range: string): {
+  dailyTrend: OverviewPayload['dailyTrend'];
+  providerTrend: OverviewPayload['providerDailyTrend'];
+  tokenComposition: OverviewPayload['tokenComposition'];
+  costComposition: OverviewPayload['costComposition'];
+} {
+  const today = ov?.today;
+  const nowHour = ov?.nowHour ?? 23;
+  if (!ov || resolveChartAxis(range) !== 'hour' || !today) {
+    return {
+      dailyTrend: ov?.dailyTrend ?? [],
+      providerTrend: ov?.providerDailyTrend ?? [],
+      tokenComposition: ov?.tokenComposition ?? [],
+      costComposition: ov?.costComposition ?? [],
+    };
+  }
+  return {
+    dailyTrend: toHourlyDailyTrend(today, nowHour, ov.hourlyTrend),
+    providerTrend: toHourlyProviderTrend(today, nowHour, ov.hourlyProviderTrend),
+    tokenComposition: toHourlyTokenComposition(today, nowHour, ov.hourlyTokenComposition),
+    costComposition: toHourlyCostComposition(today, nowHour, ov.hourlyCostComposition),
+  };
+}
+
+export function toHourlyCostComposition(
+  today: string,
+  nowHour: number,
+  hourly: HourlyCostCompositionItem[] | undefined,
+): CostCompositionItem[] {
+  return (hourly ?? [])
+    .filter((row) => row.usageDate === today && row.hour <= nowHour)
+    .map((row) => ({
+      usageDate: hourAxisKey(row.usageDate, row.hour),
+      model: row.model,
+      estimatedCostUsd: row.estimatedCostUsd,
+    }));
+}
+
 export function pivotProviderTrend(
   dailyTrend: OverviewPayload['dailyTrend'],
   providerTrend: OverviewPayload['providerDailyTrend'],
@@ -197,4 +324,55 @@ export function pivotProviderTrend(
   }));
 
   return { data, providers };
+}
+
+export const OTHER_MODEL_KEY = '__other__';
+
+export function pivotModelCost(
+  dailyTrend: OverviewPayload['dailyTrend'],
+  costComposition: CostCompositionItem[] | undefined,
+  options: {
+    maxNamed?: number;
+    minRatio?: number;
+    otherLabel?: string;
+  } = {},
+): { data: Record<string, unknown>[]; models: string[] } {
+  const otherLabel = options.otherLabel ?? 'Other';
+  const totals = new Map<string, number>();
+  for (const row of costComposition ?? []) {
+    if (!row.model) continue;
+    totals.set(row.model, (totals.get(row.model) ?? 0) + Number(row.estimatedCostUsd || 0));
+  }
+
+  const ranked = [...totals.entries()]
+    .filter(([, slice]) => slice > 0)
+    .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
+    .map(([model, slice]) => ({ value: model, label: model, slice }));
+
+  const { rows } = foldRankedSlices(ranked, {
+    maxNamed: options.maxNamed ?? 10,
+    minRatio: options.minRatio ?? 0.015,
+    otherLabel,
+  });
+  const named = rows.filter((row) => row.value !== 'other').map((row) => row.value);
+  const hasOther = rows.some((row) => row.value === 'other');
+  const keep = new Set(named);
+  const models = hasOther ? [...named, OTHER_MODEL_KEY] : named;
+
+  const dateMap = new Map<string, Record<string, number>>();
+  for (const row of costComposition ?? []) {
+    if (!row.model) continue;
+    const key = keep.has(row.model) ? row.model : OTHER_MODEL_KEY;
+    if (!hasOther && key === OTHER_MODEL_KEY) continue;
+    const existing = dateMap.get(row.usageDate) ?? {};
+    existing[key] = (existing[key] ?? 0) + Number(row.estimatedCostUsd || 0);
+    dateMap.set(row.usageDate, existing);
+  }
+
+  const data = dailyTrend.map((day) => ({
+    usageDate: day.usageDate,
+    ...Object.fromEntries(models.map((model) => [model, dateMap.get(day.usageDate)?.[model] ?? 0])),
+  }));
+
+  return { data, models };
 }

@@ -6,8 +6,9 @@ export type {
   PricingCatalog,
   CostCalcInput,
   CostCalcResult,
+  CostParts,
 } from './types.js';
 
 export { catalog, getPricingCatalog, PRICING_VERSION } from './catalog.js';
-export { calculateCost, getWorstCostStatus } from './calculate.js';
+export { calculateCost, calculateCostParts, getWorstCostStatus, scaleCostParts } from './calculate.js';
 export type { CalculateCostOptions } from './calculate.js';

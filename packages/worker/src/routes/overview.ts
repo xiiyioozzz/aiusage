@@ -1,7 +1,7 @@
 import { PUBLIC_READ_CACHE_HEADERS, jsonError, jsonOk } from '../utils/response.js';
 import { toPublicProjectName } from '../utils/privacy.js';
 import type { Env } from '../types.js';
-import type { OverviewComparisonPayload } from '@aiusage/shared';
+import { shiftCalendarYear, type CostCompositionItem, type OverviewComparisonPayload } from '@aiusage/shared';
 
 export const TOTAL_TOKENS_SQL = `
   COALESCE(b.input_tokens, 0) +
@@ -70,20 +70,26 @@ export async function handleOverview(url: URL, env: Env): Promise<Response> {
   const where = buildWhere(filters);
   const previousFilters = buildPreviousFilters(filters);
 
-  // 热力图固定查最近 365 天（不受 range 过滤器影响，但保留 device/provider 等维度过滤）
   const today = dateStringInTimeZone(new Date(), timeZone);
-  const heatmapMinDate = addCalendarDays(today, -364);
-  const heatmapWhere = buildWhere({ ...filters, minDate: heatmapMinDate, maxDate: today, rangeDays: 365, range: '365d' });
+  const nowHour = hourInTimeZone(new Date(), timeZone);
+  const wantHourly = filters.range === 'today' || filters.range === '1d' || filters.range === '7d';
+  const wantHourlyCost = filters.range === 'today' || filters.range === '1d';
 
   const [
     summary,
     trendRows,
     providerTrendRows,
     tokenRows,
+    costPartRows,
     modelRows,
     channelRows,
     flowRows,
     heatmapRows,
+    hourlyTrendRows,
+    hourlyHeatmapRows,
+    hourlyProviderRows,
+    hourlyTokenRows,
+    hourlyCostRows,
     devices,
     providers,
     products,
@@ -159,6 +165,22 @@ export async function handleOverview(url: URL, env: Env): Promise<Response> {
     }>(),
     env.DB.prepare(`
       SELECT
+        b.usage_date,
+        b.model,
+        COALESCE(SUM(b.estimated_cost_usd), 0) AS estimated_cost_usd
+      FROM daily_usage_breakdown b
+      ${where.whereClause}
+      GROUP BY b.usage_date, b.model
+      HAVING b.model IS NOT NULL AND b.model != ''
+        AND COALESCE(SUM(b.estimated_cost_usd), 0) > 0
+      ORDER BY b.usage_date, estimated_cost_usd DESC
+    `).bind(...where.params).all<{
+      usage_date: string;
+      model: string;
+      estimated_cost_usd: number;
+    }>(),
+    env.DB.prepare(`
+      SELECT
         b.model AS value,
         COALESCE(SUM(b.estimated_cost_usd), 0) AS estimated_cost_usd,
         COALESCE(SUM(b.event_count), 0) AS event_count,
@@ -210,14 +232,104 @@ export async function handleOverview(url: URL, env: Env): Promise<Response> {
         COALESCE(SUM(${TOTAL_TOKENS_SQL}), 0) AS total_tokens,
         COALESCE(SUM(b.estimated_cost_usd), 0) AS estimated_cost_usd
       FROM daily_usage_breakdown b
-      ${heatmapWhere.whereClause}
+      ${where.whereClause}
       GROUP BY b.usage_date
       ORDER BY b.usage_date
-    `).bind(...heatmapWhere.params).all<{
+    `).bind(...where.params).all<{
       usage_date: string;
       total_tokens: number;
       estimated_cost_usd: number;
     }>(),
+    wantHourly ? env.DB.prepare(`
+      SELECT
+        b.usage_date,
+        b.usage_hour,
+        COALESCE(SUM(b.event_count), 0) AS event_count,
+        COALESCE(SUM(b.estimated_cost_usd), 0) AS estimated_cost_usd
+      FROM hourly_usage_breakdown b
+      ${where.whereClause}
+      GROUP BY b.usage_date, b.usage_hour
+      ORDER BY b.usage_date, b.usage_hour
+    `).bind(...where.params).all<{
+      usage_date: string;
+      usage_hour: number;
+      event_count: number;
+      estimated_cost_usd: number;
+    }>() : Promise.resolve({ results: [] }),
+    wantHourly ? env.DB.prepare(`
+      SELECT
+        b.usage_date,
+        b.usage_hour,
+        COALESCE(SUM(${TOTAL_TOKENS_SQL}), 0) AS total_tokens,
+        COALESCE(SUM(b.estimated_cost_usd), 0) AS estimated_cost_usd,
+        COALESCE(SUM(b.event_count), 0) AS event_count
+      FROM hourly_usage_breakdown b
+      ${where.whereClause}
+      GROUP BY b.usage_date, b.usage_hour
+      ORDER BY b.usage_date, b.usage_hour
+    `).bind(...where.params).all<{
+      usage_date: string;
+      usage_hour: number;
+      total_tokens: number;
+      estimated_cost_usd: number;
+      event_count: number;
+    }>() : Promise.resolve({ results: [] }),
+    wantHourly ? env.DB.prepare(`
+      SELECT
+        b.usage_date,
+        b.usage_hour,
+        ${providerDisplaySql('b')} AS provider,
+        COALESCE(SUM(b.estimated_cost_usd), 0) AS estimated_cost_usd
+      FROM hourly_usage_breakdown b
+      ${where.whereClause}
+      GROUP BY b.usage_date, b.usage_hour, ${providerDisplaySql('b')}
+      ORDER BY b.usage_date, b.usage_hour, provider
+    `).bind(...where.params).all<{
+      usage_date: string;
+      usage_hour: number;
+      provider: string;
+      estimated_cost_usd: number;
+    }>() : Promise.resolve({ results: [] }),
+    wantHourlyCost ? env.DB.prepare(`
+      SELECT
+        b.usage_date,
+        b.usage_hour,
+        COALESCE(SUM(b.input_tokens), 0) AS input_tokens,
+        COALESCE(SUM(b.cached_input_tokens), 0) AS cached_input_tokens,
+        COALESCE(SUM(b.cache_write_tokens), 0) AS cache_write_tokens,
+        COALESCE(SUM(b.output_tokens), 0) AS output_tokens,
+        COALESCE(SUM(b.reasoning_output_tokens), 0) AS reasoning_output_tokens
+      FROM hourly_usage_breakdown b
+      ${where.whereClause}
+      GROUP BY b.usage_date, b.usage_hour
+      ORDER BY b.usage_date, b.usage_hour
+    `).bind(...where.params).all<{
+      usage_date: string;
+      usage_hour: number;
+      input_tokens: number;
+      cached_input_tokens: number;
+      cache_write_tokens: number;
+      output_tokens: number;
+      reasoning_output_tokens: number;
+    }>() : Promise.resolve({ results: [] }),
+    wantHourlyCost ? env.DB.prepare(`
+      SELECT
+        b.usage_date,
+        b.usage_hour,
+        b.model,
+        COALESCE(SUM(b.estimated_cost_usd), 0) AS estimated_cost_usd
+      FROM hourly_usage_breakdown b
+      ${where.whereClause}
+      GROUP BY b.usage_date, b.usage_hour, b.model
+      HAVING b.model IS NOT NULL AND b.model != ''
+        AND COALESCE(SUM(b.estimated_cost_usd), 0) > 0
+      ORDER BY b.usage_date, b.usage_hour, estimated_cost_usd DESC
+    `).bind(...where.params).all<{
+      usage_date: string;
+      usage_hour: number;
+      model: string;
+      estimated_cost_usd: number;
+    }>() : Promise.resolve({ results: [] }),
     loadFacetOptions('device_id', filters, env),
     loadFacetOptions('provider', filters, env),
     loadFacetOptions('product', filters, env),
@@ -270,6 +382,7 @@ export async function handleOverview(url: URL, env: Env): Promise<Response> {
         Number(row.output_tokens ?? 0) +
         Number(row.reasoning_output_tokens ?? 0),
     })),
+    costComposition: buildDailyCostComposition(costPartRows.results ?? []),
     modelCostShare: (modelRows.results ?? []).map(row => ({
       value: row.value,
       label: row.value,
@@ -287,6 +400,49 @@ export async function handleOverview(url: URL, env: Env): Promise<Response> {
     heatmap: (heatmapRows.results ?? []).map(row => ({
       usageDate: row.usage_date,
       totalTokens: Number(row.total_tokens ?? 0),
+      estimatedCostUsd: roundUsd(row.estimated_cost_usd ?? 0),
+    })),
+    nowHour,
+    hourlyTrend: (hourlyTrendRows.results ?? []).map(row => ({
+      usageDate: row.usage_date,
+      hour: Number(row.usage_hour ?? 0),
+      eventCount: Number(row.event_count ?? 0),
+      estimatedCostUsd: roundUsd(row.estimated_cost_usd ?? 0),
+    })),
+    hourlyHeatmap: (hourlyHeatmapRows.results ?? []).map(row => ({
+      usageDate: row.usage_date,
+      hour: Number(row.usage_hour ?? 0),
+      totalTokens: Number(row.total_tokens ?? 0),
+      estimatedCostUsd: roundUsd(row.estimated_cost_usd ?? 0),
+      eventCount: Number(row.event_count ?? 0),
+    })),
+    hourlyProviderTrend: (hourlyProviderRows.results ?? [])
+      .filter(row => !isGatewayProvider(row.provider))
+      .map(row => ({
+        usageDate: row.usage_date,
+        hour: Number(row.usage_hour ?? 0),
+        provider: row.provider,
+        estimatedCostUsd: roundUsd(row.estimated_cost_usd ?? 0),
+      })),
+    hourlyTokenComposition: (hourlyTokenRows.results ?? []).map(row => ({
+      usageDate: row.usage_date,
+      hour: Number(row.usage_hour ?? 0),
+      inputTokens: Number(row.input_tokens ?? 0),
+      cachedInputTokens: Number(row.cached_input_tokens ?? 0),
+      cacheWriteTokens: Number(row.cache_write_tokens ?? 0),
+      outputTokens: Number(row.output_tokens ?? 0),
+      reasoningOutputTokens: Number(row.reasoning_output_tokens ?? 0),
+      totalTokens:
+        Number(row.input_tokens ?? 0) +
+        Number(row.cached_input_tokens ?? 0) +
+        Number(row.cache_write_tokens ?? 0) +
+        Number(row.output_tokens ?? 0) +
+        Number(row.reasoning_output_tokens ?? 0),
+    })),
+    hourlyCostComposition: (hourlyCostRows.results ?? []).map(row => ({
+      usageDate: row.usage_date,
+      hour: Number(row.usage_hour ?? 0),
+      model: row.model,
       estimatedCostUsd: roundUsd(row.estimated_cost_usd ?? 0),
     })),
     interactionMetrics,
@@ -745,6 +901,37 @@ function roundUsd(value: number): number {
   return Math.round(Number(value || 0) * 10000) / 10000;
 }
 
+interface CostPartRow {
+  usage_date: string;
+  model: string;
+  estimated_cost_usd: number;
+}
+
+export function buildDailyCostComposition(rows: CostPartRow[]): CostCompositionItem[] {
+  const byDateModel = new Map<string, CostCompositionItem>();
+
+  for (const row of rows) {
+    const model = String(row.model ?? '').trim();
+    const stored = Number(row.estimated_cost_usd ?? 0);
+    if (!model || stored <= 0) continue;
+    const key = `${row.usage_date}\u0001${model}`;
+    const current = byDateModel.get(key);
+    if (current) {
+      current.estimatedCostUsd += stored;
+      continue;
+    }
+    byDateModel.set(key, {
+      usageDate: row.usage_date,
+      model,
+      estimatedCostUsd: stored,
+    });
+  }
+
+  return [...byDateModel.values()]
+    .map((item) => ({ ...item, estimatedCostUsd: roundUsd(item.estimatedCostUsd) }))
+    .sort((a, b) => a.usageDate.localeCompare(b.usageDate) || b.estimatedCostUsd - a.estimatedCostUsd || a.model.localeCompare(b.model));
+}
+
 export function buildDateWindow(
   range: string,
   now: Date = new Date(),
@@ -756,9 +943,16 @@ export function buildDateWindow(
   let start: Date;
   let days: number;
 
-  if (range === '7d') days = 7;
+  if (range === 'today' || range === '1d') days = 1;
+  else if (range === '7d') days = 7;
   else if (range === '30d') days = 30;
   else if (range === '3m' || range === '90d') days = 90;
+  else if (range === '6m' || range === '180d') days = 180;
+  else if (range === 'year' || range === '1y') {
+    start = new Date(Date.UTC(today.getUTCFullYear(), 0, 1));
+    days = diffUtcDays(start, today) + 1;
+    return { minDate: formatDate(start), maxDate: formatDate(today), days };
+  }
   else if (range === 'month') {
     start = new Date(Date.UTC(today.getUTCFullYear(), today.getUTCMonth(), 1));
     days = diffUtcDays(start, today) + 1;
@@ -769,7 +963,14 @@ export function buildDateWindow(
   return { minDate: formatDate(start), maxDate: formatDate(today), days };
 }
 
-function buildPreviousFilters(filters: DashboardFilters): DashboardFilters | null {
+export function buildPreviousFilters(filters: DashboardFilters): DashboardFilters | null {
+  if (filters.range === 'year' && filters.minDate && filters.maxDate) {
+    return {
+      ...filters,
+      minDate: shiftCalendarYear(filters.minDate, -1),
+      maxDate: shiftCalendarYear(filters.maxDate, -1),
+    };
+  }
   if (!filters.minDate || !filters.rangeDays) return null;
   const currentStart = parseDateOnly(filters.minDate);
   const previousMax = addUtcDays(currentStart, -1);
@@ -783,6 +984,16 @@ function buildPreviousFilters(filters: DashboardFilters): DashboardFilters | nul
 
 function siteTimeZone(env: Env): string {
   return env.DEFAULT_TIMEZONE?.trim() || 'UTC';
+}
+
+export function hourInTimeZone(date: Date, timeZone: string): number {
+  const parts = new Intl.DateTimeFormat('en-US', {
+    timeZone,
+    hour: 'numeric',
+    hourCycle: 'h23',
+  }).formatToParts(date);
+  const hour = Number(parts.find((part) => part.type === 'hour')?.value);
+  return Number.isFinite(hour) ? hour : date.getUTCHours();
 }
 
 export function dateStringInTimeZone(date: Date, timeZone: string): string {

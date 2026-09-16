@@ -12,6 +12,7 @@ import {
   emptyResult,
   finalize,
   accumulate,
+  mergeHourlyResults,
 } from './utils.js';
 import { scanKiroProxyDates } from './kiro-proxy.js';
 import { scanKiroRecoveredDates } from './kiro-recovered.js';
@@ -139,7 +140,7 @@ async function scanKiroIdeDates(
         cacheWrite: 0,
         output,
         reasoning: 0,
-      });
+      }, 1, when);
     }
   }
 
@@ -154,6 +155,7 @@ function mergeBreakdownMaps(
   for (const date of dates) {
     merged.set(date, maps.flatMap(map => map.get(date) ?? []));
   }
+  mergeHourlyResults(merged, maps);
   return merged;
 }
 

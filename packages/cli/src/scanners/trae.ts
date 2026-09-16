@@ -4,6 +4,7 @@ import { join, resolve } from 'node:path';
 import { PRICING_VERSION, type IngestBreakdown } from '@aiusage/shared';
 import {
   accumulate,
+  addHourlyCost,
   dateKey,
   emptyResult,
   finalize,
@@ -168,6 +169,8 @@ export async function scanTraeDates(
         reasoningOutputTokens: 0,
       },
       event,
+      1,
+      event.timestamp,
     );
 
     if (event.costUSD && event.costUSD > 0) {
@@ -177,6 +180,7 @@ export async function scanTraeDates(
         // International Trae returns the vendor's account-level charge.
         breakdown.pricingVersion = PRICING_VERSION;
       }
+      addHourlyCost(day, event.timestamp, breakdownKey, event.costUSD);
     }
 
     const sessionKey = `${usageDate}|${breakdownKey}`;

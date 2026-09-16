@@ -138,7 +138,7 @@ export async function scanKiroProxyDates(
       cacheWrite: event.cacheWrite,
       output: event.output,
       reasoning: 0,
-    });
+    }, 1, event.when);
   }
 
   return finalize(grouped);

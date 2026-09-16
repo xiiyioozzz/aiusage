@@ -25,9 +25,15 @@ export interface DeviceInfo {
   appVersion: string;
 }
 
+export interface IngestHourlyBucket {
+  hour: number;
+  breakdowns: IngestBreakdown[];
+}
+
 export interface IngestDay {
   usageDate: string;
   breakdowns: IngestBreakdown[];
+  hourly?: IngestHourlyBucket[];
   activity?: IngestActivityDay;
 }
 
@@ -117,10 +123,18 @@ export interface OverviewResponse {
   dailyTrend: DailyTrendItem[];
   providerDailyTrend: ProviderDailyTrendItem[];
   tokenComposition: TokenCompositionItem[];
+  costComposition?: CostCompositionItem[];
   modelCostShare: ShareItem[];
   channelCostShare: ShareItem[];
   sankey: SankeyGraph;
   heatmap: HeatmapDay[];
+  /** Site-timezone hour of day (0–23) when the response was built. */
+  nowHour?: number;
+  hourlyTrend?: HourlyTrendItem[];
+  hourlyHeatmap?: HourlyHeatmapItem[];
+  hourlyProviderTrend?: HourlyProviderTrendItem[];
+  hourlyTokenComposition?: HourlyTokenCompositionItem[];
+  hourlyCostComposition?: HourlyCostCompositionItem[];
   interactionMetrics?: InteractionMetricsPayload;
   comparison?: OverviewComparisonPayload | null;
   filters: DashboardFiltersPayload;
@@ -184,6 +198,52 @@ export interface TokenCompositionItem {
   outputTokens: number;
   reasoningOutputTokens: number;
   totalTokens: number;
+}
+
+export interface CostCompositionItem {
+  usageDate: string;
+  model: string;
+  estimatedCostUsd: number;
+}
+
+export interface HourlyTrendItem {
+  usageDate: string;
+  hour: number;
+  eventCount: number;
+  estimatedCostUsd: number;
+}
+
+export interface HourlyProviderTrendItem {
+  usageDate: string;
+  hour: number;
+  provider: string;
+  estimatedCostUsd: number;
+}
+
+export interface HourlyHeatmapItem {
+  usageDate: string;
+  hour: number;
+  totalTokens: number;
+  estimatedCostUsd: number;
+  eventCount: number;
+}
+
+export interface HourlyTokenCompositionItem {
+  usageDate: string;
+  hour: number;
+  inputTokens: number;
+  cachedInputTokens: number;
+  cacheWriteTokens: number;
+  outputTokens: number;
+  reasoningOutputTokens: number;
+  totalTokens: number;
+}
+
+export interface HourlyCostCompositionItem {
+  usageDate: string;
+  hour: number;
+  model: string;
+  estimatedCostUsd: number;
 }
 
 export interface ShareItem {

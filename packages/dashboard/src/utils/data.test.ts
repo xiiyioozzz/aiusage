@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { buildQuery, padMonth, transformSankey } from './data';
+import { OTHER_MODEL_KEY, buildQuery, hourAxisKey, padMonth, pivotModelCost, selectChartSeries, toHourlyDailyTrend, transformSankey } from './data';
 import { foldRankedSlices } from './fold';
 
 test('buildQuery encodes multi-select filters as repeated params', () => {
@@ -23,6 +23,16 @@ test('buildQuery encodes multi-select filters as repeated params', () => {
 test('buildQuery keeps month range for the API', () => {
   const query = buildQuery({ range: 'month', products: [] });
   assert.equal(new URLSearchParams(query).get('range'), 'month');
+});
+
+test('buildQuery keeps today range for the API', () => {
+  const query = buildQuery({ range: 'today', products: [] });
+  assert.equal(new URLSearchParams(query).get('range'), 'today');
+});
+
+test('buildQuery keeps year range for the API', () => {
+  const query = buildQuery({ range: 'year', products: [] });
+  assert.equal(new URLSearchParams(query).get('range'), 'year');
 });
 
 test('sankey keeps named projects instead of folding them all into Other', () => {
@@ -110,4 +120,67 @@ test('padMonth keeps server active/total days and stops at site today', () => {
   assert.equal(padded.dailyTrend.length, 15);
   assert.equal(padded.dailyTrend[0]?.usageDate, '2026-09-01');
   assert.equal(padded.dailyTrend.at(-1)?.usageDate, '2026-09-15');
+});
+
+test('pivotModelCost stacks daily cost by model and folds the tail', () => {
+  const dailyTrend = [
+    { usageDate: '2026-09-14', eventCount: 2, estimatedCostUsd: 12 },
+    { usageDate: '2026-09-15', eventCount: 3, estimatedCostUsd: 21 },
+  ];
+  const costComposition = [
+    { usageDate: '2026-09-14', model: 'claude-sonnet-4-6', estimatedCostUsd: 10 },
+    { usageDate: '2026-09-14', model: 'tiny-a', estimatedCostUsd: 1 },
+    { usageDate: '2026-09-14', model: 'tiny-b', estimatedCostUsd: 1 },
+    { usageDate: '2026-09-15', model: 'claude-sonnet-4-6', estimatedCostUsd: 18 },
+    { usageDate: '2026-09-15', model: 'gpt-5.4', estimatedCostUsd: 2 },
+    { usageDate: '2026-09-15', model: 'tiny-a', estimatedCostUsd: 1 },
+  ];
+
+  const { data, models } = pivotModelCost(dailyTrend, costComposition, {
+    maxNamed: 2,
+    minRatio: 0.2,
+    otherLabel: '其余模型',
+  });
+
+  assert.deepEqual(models, ['claude-sonnet-4-6', 'gpt-5.4', OTHER_MODEL_KEY]);
+  assert.equal(data[0]?.['claude-sonnet-4-6'], 10);
+  assert.equal(data[0]?.[OTHER_MODEL_KEY], 2);
+  assert.equal(data[1]?.['claude-sonnet-4-6'], 18);
+  assert.equal(data[1]?.['gpt-5.4'], 2);
+  assert.equal(data[1]?.[OTHER_MODEL_KEY], 1);
+});
+
+test('pads today hourly bars through the current site hour', () => {
+  const rows = toHourlyDailyTrend('2026-09-15', 3, [
+    { usageDate: '2026-09-15', hour: 1, eventCount: 2, estimatedCostUsd: 4 },
+  ]);
+  assert.equal(rows.length, 4);
+  assert.equal(rows[0]?.usageDate, hourAxisKey('2026-09-15', 0));
+  assert.equal(rows[1]?.estimatedCostUsd, 4);
+  assert.equal(rows[3]?.eventCount, 0);
+});
+
+test('selectChartSeries keeps daily grain outside today', () => {
+  const selected = selectChartSeries({
+    ok: true,
+    today: '2026-09-15',
+    nowHour: 10,
+    totalDays: 1,
+    activeDays: 1,
+    totalEvents: 1,
+    totalSessions: 0,
+    costBearingEvents: 1,
+    totalCostUsd: 1,
+    averageDailyCostUsd: 1,
+    dailyTrend: [{ usageDate: '2026-09-15', eventCount: 1, estimatedCostUsd: 1 }],
+    providerDailyTrend: [],
+    tokenComposition: [],
+    heatmap: [],
+    modelCostShare: [],
+    channelCostShare: [],
+    sankey: { nodes: [], links: [] },
+    filters: { selection: { range: '7d', deviceId: [], provider: [], product: [], channel: [], model: [], project: [] }, options: { devices: [], providers: [], products: [], channels: [], models: [], projects: [] } },
+    hourlyTrend: [{ usageDate: '2026-09-15', hour: 9, eventCount: 8, estimatedCostUsd: 3 }],
+  }, '7d');
+  assert.equal(selected.dailyTrend[0]?.usageDate, '2026-09-15');
 });

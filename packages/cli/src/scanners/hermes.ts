@@ -95,9 +95,7 @@ export async function scanHermesDates(
       cacheWrite: row.cacheWrite,
       output: row.output,
       reasoning: row.reasoning,
-    });
-    const existing = day.get(`${model}|${projectFields.project}`);
-    if (existing && row.events > 1) existing.eventCount += row.events - 1;
+    }, row.events, row.when);
   }
 
   return finalize(grouped);
