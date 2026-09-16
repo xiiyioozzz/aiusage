@@ -13,8 +13,8 @@
   "d1_databases": [
     {
       "binding": "DB",
-      "database_name": "your-d1-database-name",
-      "database_id": "your-d1-database-id"
+      "database_name": "aiusage-db",
+      "migrations_dir": "migrations"
     }
   ],
   // 部署时通过 wrangler secret put 设置:

@@ -3,16 +3,47 @@
     "private": true,
     "repository": {
         "type": "git",
-        "url": "https://github.com/imetn/aiusage.git"
+        "url": "https://github.com/xiiyioozzz/aiusage.git"
     },
-    "homepage": "https://github.com/imetn/aiusage",
+    "homepage": "https://aiusage.xdullboy.com",
     "type": "module",
     "scripts": {
         "setup": "node scripts/setup.mjs",
         "build": "turbo build",
+        "predeploy": "node scripts/predeploy.mjs",
+        "deploy": "pnpm --filter @aiusage/worker exec wrangler deploy --config .wrangler.deploy.jsonc",
+        "db:migrate:remote": "pnpm --filter @aiusage/worker exec wrangler d1 migrations apply DB --remote",
         "dev": "turbo dev",
         "lint": "turbo lint",
         "test": "turbo test"
+    },
+    "cloudflare": {
+        "label": "AIUsage",
+        "products": [
+            "Workers",
+            "D1"
+        ],
+        "categories": [
+            "storage"
+        ],
+        "publish": false,
+        "bindings": {
+            "DB": {
+                "description": "D1 stores device enrollment and usage breakdowns. Remote migrations run during deployment."
+            },
+            "SITE_ID": {
+                "description": "Stable deployment identifier, e.g. `site_a1b2c3d4`. Generate with `openssl rand -hex 8` and prefix `site_`."
+            },
+            "ENROLL_TOKEN": {
+                "description": "Shared secret used by `aiusage enroll` to register devices. Generate with `openssl rand -hex 32`."
+            },
+            "DEVICE_TOKEN_SECRET": {
+                "description": "HMAC key for device tokens. Generate with `openssl rand -hex 32`."
+            },
+            "PROJECT_NAME_SALT": {
+                "description": "Salt for masked public project names. Generate with `openssl rand -hex 16`."
+            }
+        }
     },
     "devDependencies": {
         "tsx": "^4.21.0",

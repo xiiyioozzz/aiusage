@@ -1,0 +1,6 @@
+# Worker secrets for local `wrangler dev`. Copy to packages/worker/.dev.vars
+# and never commit the real values.
+SITE_ID=site_replace_me
+ENROLL_TOKEN=replace_with_openssl_rand_hex_32
+DEVICE_TOKEN_SECRET=replace_with_openssl_rand_hex_32
+PROJECT_NAME_SALT=replace_with_openssl_rand_hex_16

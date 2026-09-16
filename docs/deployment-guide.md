@@ -23,10 +23,28 @@ Device 03 ──sync──▶
 - [pnpm](https://pnpm.io/)
 - A [Cloudflare](https://dash.cloudflare.com/) account (free tier is enough)
 
-### One-Click Setup
+### Deploy to Cloudflare button
+
+[![Deploy to Cloudflare](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/xiiyioozzz/aiusage)
+
+The guided flow requires a public source repository. Use `pnpm run build` as the Build command and `wrangler deploy --config packages/worker/wrangler.jsonc` as the Deploy command. Root directory is `/`.
+
+The remote build creates or reuses the named D1 database declared in `packages/worker/wrangler.jsonc`, applies migrations, and publishes the Worker. After it finishes, set secrets and enroll a device (see Part 2). Do not commit `database_id`.
+
+### Deploy with Wrangler
 
 ```bash
-git clone https://github.com/imetn/aiusage.git
+pnpm install
+npx wrangler login
+pnpm run deploy
+```
+
+`pnpm run deploy` runs `predeploy` first: it creates or reuses the named D1 database, applies remote migrations, and builds the dashboard. Account-specific IDs stay out of `wrangler.jsonc`.
+
+### One-Click CLI Setup
+
+```bash
+git clone https://github.com/xiiyioozzz/aiusage.git
 cd aiusage
 pnpm install
 npx wrangler login
@@ -56,7 +74,7 @@ Save these values. The wizard also writes them to `.credentials` in the repo roo
 #### 1. Clone and install
 
 ```bash
-git clone https://github.com/imetn/aiusage.git
+git clone https://github.com/xiiyioozzz/aiusage.git
 cd aiusage
 pnpm install
 ```

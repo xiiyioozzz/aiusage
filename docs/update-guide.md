@@ -7,15 +7,15 @@ This guide explains how to keep your AIUsage deployment up to date with the late
 AIUsage uses a **fork-based update model**: you fork the repository to your own GitHub account, connect it to Cloudflare Workers via Git integration, and then pull upstream updates whenever a new version is released. Once set up, updates flow automatically — no manual re-deployment needed.
 
 ```
-ennann/aiusage (upstream)
+imetn/aiusage (upstream)
      │
      │  fork
      ▼
-you/aiusage (your fork)
+xiiyioozzz/aiusage (this repo)
      │
      │  Cloudflare Git integration
      ▼
-Cloudflare Worker (auto-deploy on push)
+https://aiusage.xdullboy.com
 ```
 
 ## Initial Setup (One-Time)
@@ -31,8 +31,8 @@ Go to [github.com/imetn/aiusage](https://github.com/imetn/aiusage) and click **F
 3. Select **Import a repository** (or connect via Git)
 4. Choose your forked `aiusage` repository
 5. Configure the build settings:
-   - **Build command**: `pnpm install && pnpm build`
-   - **Build output directory**: `packages/worker/dist`
+   - **Build command**: `pnpm run build`
+   - **Deploy command**: `wrangler deploy --config packages/worker/wrangler.jsonc`
    - **Root directory**: `/` (repository root)
 6. Add your environment variables / secrets:
    - `SITE_ID`
@@ -52,10 +52,10 @@ If you haven't already created the D1 database:
 
 ```bash
 npx wrangler d1 create aiusage-db
-npx wrangler d1 migrations apply aiusage-db --remote
+pnpm db:migrate:remote
 ```
 
-Make sure your `wrangler.jsonc` has the correct `database_id`.
+`predeploy` reuses the named D1 database. Do not commit a generated `database_id`.
 
 ## Pulling Upstream Updates
 
