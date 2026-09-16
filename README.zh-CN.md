@@ -17,7 +17,7 @@
 </p>
 
 <p align="center">
-  <a href="https://aiusage.yizhe.me"><strong>在线演示</strong></a>
+  <a href="https://aiusage.xdullboy.com"><strong>在线演示</strong></a>
 </p>
 
 ---
@@ -60,6 +60,49 @@ graph LR
   W -- 公开 API --> Dashboard["<b>看板</b><br/>只读 Web UI"]
 ```
 
+### 这个 fork
+
+本仓库是 [xiiyioozzz/aiusage](https://github.com/xiiyioozzz/aiusage)，线上看板是 **[aiusage.xdullboy.com](https://aiusage.xdullboy.com)**。
+
+相对上游，这里额外做了：
+
+- Cursor / Kiro / Hermes 按公开牌价估费，Codex 对外显示为 ChatGPT
+- 筛选增加 **当天**、**本年**，热力图跟着所选区间变化
+- 当天用小时时间线，费用构成按模型拆
+- 公开项目名保持可读；Cursor 无项目窗口会映射走，不再堆在 `unknown`
+
+## 部署到 Cloudflare Workers
+
+AIUsage 以单个 Worker + D1 部署。Worker 同时托管公开看板和上报 API。
+
+### 一键部署
+
+[![Deploy to Cloudflare](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/xiiyioozzz/aiusage)
+
+引导流程要求源仓库公开。Build command 使用 `pnpm run build`，Deploy command 使用 `wrangler deploy --config packages/worker/wrangler.jsonc`。远程构建会创建或复用具名 D1、执行 migration 并发布 Worker。完成后设置 Worker 密钥，再用 `aiusage enroll` 接入设备。
+
+### 使用 Wrangler 部署
+
+登录 Wrangler、安装依赖并部署：
+
+```bash
+pnpm install
+npx wrangler login
+pnpm run deploy
+```
+
+`predeploy` Hook 会创建或复用具名 D1，对具名数据库应用 migration 并构建看板。账号专属 ID 绝不会写入可移植的 `packages/worker/wrangler.jsonc`。普通 `pnpm run build` 始终是纯本地构建，不访问 Cloudflare。
+
+部署完成后设置 `SITE_ID`、`ENROLL_TOKEN`、`DEVICE_TOKEN_SECRET`、`PROJECT_NAME_SALT`，再用 CLI 注册设备。密钥禁止提交到仓库。详见[部署指南](./docs/deployment-guide.md)。
+
+部署声明以下 binding：
+
+| Binding | Cloudflare 产品 | 用途 |
+| --- | --- | --- |
+| `DB` | D1 | 设备注册与用量明细的权威数据 |
+
+`pnpm run build` 始终只执行本地 monorepo 构建，不发现或修改远程资源；`pnpm run predeploy` 负责远程资源准备、migration 和看板构建。
+
 ## 快速开始
 
 ### 让 AI 代理帮你部署
@@ -67,7 +110,7 @@ graph LR
 复制以下提示词，粘贴给你的 AI 编程代理（Claude Code、Codex、Copilot、Gemini 等）：
 
 ```text
-克隆 https://github.com/imetn/aiusage.git，阅读 skills/aiusage-server/aiusage-server.md，
+克隆 https://github.com/xiiyioozzz/aiusage.git，阅读 skills/aiusage-server/aiusage-server.md，
 帮我把 AIUsage 部署到我的 Cloudflare 账户。
 部署完成后，按照 skills/aiusage-cli/aiusage-cli.md 把这台设备接入。
 ```
@@ -75,7 +118,7 @@ graph LR
 ### 或手动部署
 
 ```bash
-git clone https://github.com/imetn/aiusage.git
+git clone https://github.com/xiiyioozzz/aiusage.git
 cd aiusage && pnpm install
 npx wrangler login
 pnpm setup

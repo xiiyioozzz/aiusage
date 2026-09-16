@@ -17,7 +17,7 @@
 </p>
 
 <p align="center">
-  <a href="https://aiusage.yizhe.me"><strong>Live Demo</strong></a>
+  <a href="https://aiusage.xdullboy.com"><strong>Live Demo</strong></a>
 </p>
 
 ---
@@ -64,6 +64,49 @@ graph LR
   W -- public API --> Dashboard["<b>Dashboard</b><br/>read-only web UI"]
 ```
 
+### This fork
+
+This repo is [xiiyioozzz/aiusage](https://github.com/xiiyioozzz/aiusage). The live board is **[aiusage.xdullboy.com](https://aiusage.xdullboy.com)**.
+
+On top of upstream, this fork also:
+
+- Estimates Cursor / Kiro / Hermes cost from public list prices, and labels Codex as ChatGPT
+- Adds **Today** and **This year** filters; the activity heatmap follows the selected range
+- Uses an hourly timeline for today, and breaks cost composition down by model
+- Keeps public project names readable, and remaps Cursor empty-window chats instead of leaving them as `unknown`
+
+## Deploy to Cloudflare Workers
+
+AIUsage deploys as one Worker with a D1 database. The Worker hosts the public dashboard and the ingest API.
+
+### Deploy button
+
+[![Deploy to Cloudflare](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/xiiyioozzz/aiusage)
+
+The guided flow requires a public source repository. Use `pnpm run build` as the Build command and `wrangler deploy --config packages/worker/wrangler.jsonc` as the Deploy command. The remote build creates or reuses the named D1 database, applies migrations, and publishes the Worker. After it finishes, set Worker secrets and enroll a device with `aiusage enroll`.
+
+### Deploy with Wrangler
+
+Authenticate Wrangler, install dependencies, and deploy:
+
+```bash
+pnpm install
+npx wrangler login
+pnpm run deploy
+```
+
+The `predeploy` hook creates or reuses the named D1 database, applies the D1 baseline to the named database, and builds the dashboard. It never writes account-specific IDs to the portable `packages/worker/wrangler.jsonc`. Ordinary `pnpm run build` remains local and does not contact Cloudflare.
+
+After deployment, set `SITE_ID`, `ENROLL_TOKEN`, `DEVICE_TOKEN_SECRET`, and `PROJECT_NAME_SALT`, then enroll a device. Provider secrets must never be committed. See the [Deployment Guide](./docs/deployment-guide.md).
+
+The deployment declares these bindings:
+
+| Binding | Cloudflare product | Purpose |
+| --- | --- | --- |
+| `DB` | D1 | Authoritative device enrollment and usage breakdowns |
+
+`pnpm run build` remains a local monorepo build and never discovers or modifies remote resources. `pnpm run predeploy` performs remote preparation, migrations, and the dashboard build.
+
 ## Quickstart
 
 ### Deploy with your AI agent
@@ -71,7 +114,7 @@ graph LR
 Copy this prompt, paste it into your AI coding agent (Claude Code, Codex, Copilot, Gemini, etc.):
 
 ```text
-Clone https://github.com/imetn/aiusage.git, read skills/aiusage-server/aiusage-server.md,
+Clone https://github.com/xiiyioozzz/aiusage.git, read skills/aiusage-server/aiusage-server.md,
 and help me deploy AIUsage to my Cloudflare account.
 After the server is up, follow skills/aiusage-cli/aiusage-cli.md to connect this device.
 ```
@@ -79,7 +122,7 @@ After the server is up, follow skills/aiusage-cli/aiusage-cli.md to connect this
 ### Or deploy manually
 
 ```bash
-git clone https://github.com/imetn/aiusage.git
+git clone https://github.com/xiiyioozzz/aiusage.git
 cd aiusage && pnpm install
 npx wrangler login
 pnpm setup
