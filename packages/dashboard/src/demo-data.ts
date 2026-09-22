@@ -10932,6 +10932,18 @@ export const DEMO_OVERVIEW: OverviewResponse & { ok: boolean } = {
   }
 };
 
+const demoToolShare = DEMO_OVERVIEW.filters.options.products.filter((product) => (product.estimatedCostUsd ?? 0) > 0);
+const demoToolTotal = demoToolShare.reduce((sum, product) => sum + (product.estimatedCostUsd ?? 0), 0);
+if (demoToolTotal > 0) {
+  DEMO_OVERVIEW.toolDailyTrend = DEMO_OVERVIEW.dailyTrend.flatMap((day) =>
+    demoToolShare.map((product) => ({
+      usageDate: day.usageDate,
+      tool: product.value,
+      estimatedCostUsd: Number(((day.estimatedCostUsd * (product.estimatedCostUsd ?? 0)) / demoToolTotal).toFixed(4)),
+    })),
+  );
+}
+
 export const DEMO_HEALTH = {
   ok: true,
   siteId: 'demo',

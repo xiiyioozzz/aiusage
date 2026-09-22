@@ -125,12 +125,16 @@ function applyAccumulate(
   const eventCount = Math.max(1, Math.round(events));
   const existing = grouped.get(key);
   if (existing) {
+    if (base.tokenQuality === 'estimated') existing.tokenQuality = 'estimated';
+    else existing.tokenQuality ??= base.tokenQuality;
     existing.eventCount += eventCount;
     existing.inputTokens += tokens.input;
     existing.cachedInputTokens += tokens.cached;
     existing.cacheWriteTokens += tokens.cacheWrite;
     existing.outputTokens += tokens.output;
     existing.reasoningOutputTokens += tokens.reasoning;
+    if (base.costUSD) existing.costUSD = (existing.costUSD ?? 0) + base.costUSD;
+    if (base.pricingVersion) existing.pricingVersion = base.pricingVersion;
     return;
   }
   grouped.set(key, {
@@ -245,6 +249,8 @@ export function takeHourly(result: Map<string, IngestBreakdown[]>): HourGrouped 
 }
 
 function mergeBreakdown(target: IngestBreakdown, incoming: IngestBreakdown): void {
+  if (incoming.tokenQuality === 'estimated') target.tokenQuality = 'estimated';
+  else target.tokenQuality ??= incoming.tokenQuality;
   target.eventCount += incoming.eventCount;
   target.inputTokens += incoming.inputTokens;
   target.cachedInputTokens += incoming.cachedInputTokens;

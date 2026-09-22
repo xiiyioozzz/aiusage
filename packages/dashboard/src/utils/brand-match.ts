@@ -89,6 +89,7 @@ export function resolveProductBrand(value: string): BrandId | undefined {
   if (id.includes('cursor')) return 'cursor';
   if (id.includes('kiro')) return 'kiro';
   if (id.includes('opencode')) return 'opencode';
+  if (id.includes('grok')) return 'grok';
   return undefined;
 }
 

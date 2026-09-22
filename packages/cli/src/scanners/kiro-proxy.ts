@@ -37,6 +37,7 @@ export interface KiroProxyScanOptions {
 }
 
 interface ProxyEvent {
+  tokenQuality: 'estimated' | 'reported';
   when: Date;
   model: string;
   project: string;
@@ -120,6 +121,7 @@ export async function scanKiroProxyDates(
     const projectFields = resolveProjectFields(event.project, options.projectAliases);
     const provider = inferProviderFromModel(model, 'kiro');
     accumulate(day, `api|${model}|${projectFields.project}`, {
+      tokenQuality: event.tokenQuality,
       provider,
       product: 'kiro',
       channel: 'api',
@@ -200,7 +202,7 @@ async function parseGoRequestLogs(filePath: string): Promise<ProxyEvent[]> {
   const events: ProxyEvent[] = [];
   for (const row of rows) {
     if (!isRecord(row) || isEmptyFailure(row.status, row)) continue;
-    const when = parseTs(row.time ?? row.timestamp);
+    const when = parseProxyTimestamp(row.time ?? row.timestamp);
     if (!when) continue;
     const tokens = readTokens(row);
     if (tokens.input + tokens.cached + tokens.cacheWrite + tokens.output <= 0) continue;
@@ -234,7 +236,7 @@ async function parseRsUsageLog(filePath: string): Promise<ProxyEvent[]> {
       continue;
     }
     if (isEmptyFailure(row.status, row)) continue;
-    const when = parseTs(row.ts ?? row.timestamp ?? row.time);
+    const when = parseProxyTimestamp(row.ts ?? row.timestamp ?? row.time);
     if (!when) continue;
     const tokens = readTokens(row);
     if (tokens.input + tokens.cached + tokens.cacheWrite + tokens.output <= 0) continue;
@@ -251,6 +253,7 @@ async function parseRsUsageLog(filePath: string): Promise<ProxyEvent[]> {
 }
 
 function readTokens(row: Record<string, unknown>): {
+  tokenQuality: 'estimated' | 'reported';
   input: number;
   cached: number;
   cacheWrite: number;
@@ -270,6 +273,7 @@ function readTokens(row: Record<string, unknown>): {
   );
   if (splitInput != null || splitOutput != null) {
     return {
+      tokenQuality: 'reported',
       input: Math.max(0, Math.round(splitInput ?? 0)),
       cached,
       cacheWrite,
@@ -279,7 +283,7 @@ function readTokens(row: Record<string, unknown>): {
 
   // Kiro-Go request_logs.json only persists the combined token count.
   const combined = Math.max(0, Math.round(readNumber(row.tokens ?? row.totalTokens ?? row.total_tokens)));
-  return { input: combined, cached, cacheWrite, output: 0 };
+  return { tokenQuality: 'estimated', input: combined, cached, cacheWrite, output: 0 };
 }
 
 export function normalizeProxyModel(modelId?: string): string {
@@ -300,6 +304,10 @@ function isEmptyFailure(status: unknown, row: Record<string, unknown>): boolean 
 
 function readString(value: unknown): string {
   return typeof value === 'string' ? value.trim() : '';
+}
+
+function parseProxyTimestamp(value: unknown): Date | null {
+  return typeof value === 'string' || typeof value === 'number' ? parseTs(value) : null;
 }
 
 function readNumber(value: unknown): number {

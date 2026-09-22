@@ -14,6 +14,7 @@ import { catalog as defaultCatalog } from './catalog.js';
  * Opus 4.7 曾经是 6x，现已不可用；保留倍率只为历史日志重算。
  * Opus 4.6 fast 已按标准价计费，因此不再放大。
  * OpenAI Codex 的 fast/priority 倍率另按官方 Codex speed/API priority 口径处理。
+ * Grok 4.7 Fast 不是固定倍率：长上下文价见 xai catalog 的 grok-4.7-fast。
  */
 const ANTHROPIC_FAST_MULTIPLIERS: Record<string, number> = {
   'claude-opus-5': 2,
@@ -73,7 +74,7 @@ const LIST_PRICE_PRODUCT: Record<string, string> = {
   alibaba: 'qwen-code',
 };
 
-function inferProviderFromModel(model: string): string | undefined {
+export function inferProviderFromModel(model: string): string | undefined {
   const value = model.trim().toLowerCase().replace(/^cursor-/, '');
   if (/^(claude|opus|sonnet|haiku|fable|mythos)(?:[-.]|$)/.test(value)) return 'anthropic';
   if (/^(gpt|chatgpt|codex|o[134])(?:[-.]|$)/.test(value)) return 'openai';
@@ -86,10 +87,36 @@ function inferProviderFromModel(model: string): string | undefined {
   return undefined;
 }
 
+export function officialListProduct(provider: string): string | undefined {
+  return LIST_PRICE_PRODUCT[provider];
+}
+
+export function canonicalListModel(model: string): { provider?: string; id: string; fast: boolean } {
+  const { baseModel, tier } = splitServiceTierSuffix(model);
+  return {
+    provider: inferProviderFromModel(baseModel),
+    id: normalizeSubscriptionModel(baseModel),
+    fast: tier === 'fast',
+  };
+}
+
+export function hasListPrice(
+  provider: string,
+  product: string,
+  model: string,
+  catalog: PricingCatalog = defaultCatalog,
+): boolean {
+  const { baseModel } = splitServiceTierSuffix(model);
+  return (resolveModelPricing(catalog, provider, product, baseModel) ?? resolveListPriceFallback(catalog, provider, product, baseModel)) != null;
+}
+
 function normalizeSubscriptionModel(model: string): string {
   let value = model.trim().toLowerCase().replace(/^cursor-/, '');
   value = value.replace(/-thinking(?:-(?:max|high|low|medium))?$/, '');
   value = value.replace(/-(?:max|low|high|xhigh|medium)$/, '');
+  if (value.startsWith('grok-4.7') || value.startsWith('grok-4-7')) {
+    return 'grok-4.7';
+  }
   if (value.startsWith('grok-bot') || value.startsWith('grok-4.6') || value.startsWith('grok-4-6')) {
     return 'grok-4.6';
   }
@@ -176,6 +203,20 @@ function toUsd(amount: number, currency: ModelPricing['currency'], catalog: Pric
   return rate ? amount / rate : amount;
 }
 
+function withFastSku(
+  catalog: PricingCatalog,
+  provider: string,
+  product: string,
+  resolved: { resolvedModel: string; pricing: ModelPricing; normalized: boolean },
+  serviceTier: ServiceTierSuffix,
+): { resolvedModel: string; pricing: ModelPricing; normalized: boolean } {
+  if (serviceTier !== 'fast') return resolved;
+  const fastModel = `${resolved.resolvedModel}-fast`;
+  const fastPricing = catalog.providers[provider]?.[product]?.models?.[fastModel];
+  if (!fastPricing) return resolved;
+  return { ...resolved, resolvedModel: fastModel, pricing: fastPricing };
+}
+
 export interface CalculateCostOptions {
   /** 自定义 catalog，便于 Worker 用 env 覆盖汇率等参数。 */
   catalog?: PricingCatalog;
@@ -210,9 +251,10 @@ export function calculateCost(
     return emptyCostResult(0, 'unavailable', cat.version);
   }
 
-  const { resolvedModel, pricing, normalized } = resolved;
   const pricingProvider = fallback && resolved === fallback ? fallback.provider : provider;
   const pricingProduct = fallback && resolved === fallback ? fallback.product : product;
+  const fastSku = withFastSku(cat, pricingProvider, pricingProduct, resolved, tier);
+  const { resolvedModel, pricing, normalized } = fastSku;
   let costStatus: CostStatus = normalized ? 'estimated' : 'exact';
 
   // 阶梯：按总 input（含 cached/cw）命中档位

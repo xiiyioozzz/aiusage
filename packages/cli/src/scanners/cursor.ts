@@ -4,6 +4,14 @@ import { homedir, tmpdir } from 'node:os';
 import { basename, dirname, join, resolve } from 'node:path';
 import type { IngestBreakdown } from '@aiusage/shared';
 import {
+  archiveCursorUsage,
+  cursorAccountKey,
+  readCursorProjectPaths,
+  readCursorUsageArchive,
+  writeCursorProjectPaths,
+} from './cursor-usage-cache.js';
+import { loadGrokBotRoster, resolveGrokBotProject } from './grok-bot-roster.js';
+import {
   accumulate,
   dateKey,
   emptyResult,
@@ -306,19 +314,36 @@ function eventsFromCsv(text: string): CursorUsageEvent[] {
 
 export async function loadCursorUsageEvents(): Promise<CursorUsageEvent[] | null> {
   const now = Date.now();
-  if (usageCache && now - usageCache.at < USAGE_CACHE_MS) return usageCache.events;
-
+  const archivePath = join(homedir(), '.aiusage', 'cursor-usage-cache.json');
+  const archived = () => readCursorUsageArchive(archivePath);
   const dbPath = findDbPath();
-  if (!dbPath) return null;
+  if (!dbPath) return archived();
 
   const auth = await readAuth(dbPath);
-  if (!auth.accessToken) return null;
+  if (!auth.accessToken) return archived();
+  if (usageCache?.token === auth.accessToken && now - usageCache.at < USAGE_CACHE_MS) return usageCache.events;
+
+  const remember = async (events: CursorUsageEvent[], source: 'json' | 'csv') => {
+    const subject = jwtSub(auth.accessToken!);
+    let combined = events;
+    if (subject) {
+      try {
+        combined = await archiveCursorUsage(archivePath, cursorAccountKey(subject, getWebBaseUrl()), source, events);
+      } catch {
+        // Do not silently replace cloud history with a partial current account
+        // if the archive could not be saved. A later successful scan can retry.
+        const previous = await archived();
+        if (previous.length) return previous;
+      }
+    }
+    usageCache = { token: auth.accessToken!, events: combined, at: now };
+    return combined;
+  };
 
   try {
     const events = await fetchUsageEvents(auth.accessToken);
     if (events.length) {
-      usageCache = { token: auth.accessToken, events, at: now };
-      return events;
+      return remember(events, 'json');
     }
   } catch {
     // 用量 JSON 失败时退回 CSV（没有 conversationId，项目会落成 unknown）
@@ -326,10 +351,9 @@ export async function loadCursorUsageEvents(): Promise<CursorUsageEvent[] | null
 
   try {
     const events = eventsFromCsv(await fetchCsv(auth.accessToken));
-    usageCache = { token: auth.accessToken, events, at: now };
-    return events;
+    return remember(events, 'csv');
   } catch {
-    return null;
+    return archived();
   }
 }
 
@@ -571,6 +595,22 @@ export function resolveCursorConversationProject(
   return resolveProjectFields(path, index.aliases);
 }
 
+export function isGrokBotUsage(event: Pick<CursorUsageEvent, 'model' | 'conversationId'>): boolean {
+  const model = event.model?.trim().toLowerCase() ?? '';
+  const conversationId = event.conversationId?.trim() ?? '';
+  return model.startsWith('grok-bot') || conversationId.startsWith('sand-subagent-');
+}
+
+export function resolveCursorUsageProject(
+  event: Pick<CursorUsageEvent, 'model' | 'conversationId'>,
+  index: CursorProjectIndex,
+): ProjectFields {
+  const project = resolveCursorConversationProject(event.conversationId, index);
+  if (project.project !== 'unknown') return project;
+  if (isGrokBotUsage(event)) return resolveGrokBotProject(event.conversationId, index.grokBots);
+  return project;
+}
+
 function resolveEmptyWindowProject(
   conversationId: string,
   index: CursorProjectIndex,
@@ -586,6 +626,7 @@ export interface CursorProjectIndex {
   conversationToPath: Map<string, string>;
   conversationNames?: Map<string, string>;
   namedFolders?: Map<string, string>;
+  grokBots?: Map<string, string>;
   aliases?: Record<string, string>;
 }
 
@@ -715,7 +756,8 @@ export function groupCursorUsageEvents(
     };
     if (tokens.input + tokens.cached + tokens.cacheWrite + tokens.output === 0) continue;
 
-    const project = resolveCursorConversationProject(event.conversationId, index);
+    const project = resolveCursorUsageProject(event, index);
+    if (project.project === 'unknown') continue;
     accumulate(grouped.get(date)!, `${model}|${project.project}`, {
       provider: 'cursor',
       product: 'cursor',
@@ -749,7 +791,7 @@ export async function isCursorAvailable(): Promise<boolean> {
 }
 
 export async function scanCursor(targetDate: string): Promise<IngestBreakdown[]> {
-  return (await scanCursorDates([targetDate])).get(targetDate) ?? [];
+  return (await scanCursorDates([targetDate]))?.get(targetDate) ?? [];
 }
 
 export async function discoverCursorDates(): Promise<string[]> {
@@ -766,10 +808,29 @@ export async function discoverCursorDates(): Promise<string[]> {
 export async function scanCursorDates(
   targetDates: string[],
   options: { projectAliases?: Record<string, string> } = {},
-): Promise<Map<string, IngestBreakdown[]>> {
+): Promise<Map<string, IngestBreakdown[]> | null> {
   const events = await loadCursorUsageEvents();
-  if (!events) return emptyResult(new Set(targetDates));
+  if (!events) return null;
   const index = await buildCursorProjectIndex();
+  await hydrateCursorProjectIndex(index);
+  index.grokBots = await loadGrokBotRoster();
   index.aliases = options.projectAliases;
   return groupCursorUsageEvents(events, targetDates, index);
+}
+
+export function applyCachedCursorProjects(
+  index: CursorProjectIndex,
+  cached: Record<string, string>,
+): void {
+  for (const [id, raw] of Object.entries(cached)) {
+    if (!id.trim() || index.conversationToPath.has(id)) continue;
+    const path = rewriteLegacyProjectPath(raw);
+    if (path && path !== 'unknown') index.conversationToPath.set(id, path);
+  }
+}
+
+async function hydrateCursorProjectIndex(index: CursorProjectIndex): Promise<void> {
+  const cachePath = join(homedir(), '.aiusage', 'cursor-conversation-projects.json');
+  applyCachedCursorProjects(index, await readCursorProjectPaths(cachePath));
+  await writeCursorProjectPaths(cachePath, Object.fromEntries(index.conversationToPath));
 }

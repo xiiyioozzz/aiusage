@@ -4,6 +4,7 @@ import { homedir } from 'node:os';
 import { resolveKimiCodeHome } from './scanners/kimi.js';
 import { resolveTraeNativeCacheDir } from './scanners/trae.js';
 import { discoverHermesProjects } from './scanners/hermes.js';
+import { discoverGrokProjects } from './scanners/grok.js';
 
 export interface DiscoveredProject {
   /** 原始项目名（目录 basename） */
@@ -68,6 +69,9 @@ export async function discoverProjects(
 
     // Hermes Agent: ~/.hermes/state.db session cwd / git_repo_root
     discoverHermesProjects().then(names => names.forEach(n => add(n, 'hermes'))),
+
+    // Grok Build: ~/.grok/sessions/{encoded-cwd}/{session-id}/summary.json
+    discoverGrokProjects().then(names => names.forEach(n => add(n, 'grok'))),
   ]);
 
   // 汇总结果

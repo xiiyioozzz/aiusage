@@ -31,6 +31,8 @@ test('maps OpenAI / ChatGPT / Codex model ids', () => {
 
 test('maps product and leftover Cursor-native models', () => {
   assert.equal(resolveProductBrand('hermes'), 'hermes');
+  assert.equal(resolveProductBrand('grok'), 'grok');
+  assert.equal(resolveProductBrand('grok-bot'), 'grok');
   assert.equal(resolveProductBrand('cursor'), 'cursor');
   assert.equal(resolveModelBrand('composer-2.5-fast'), 'cursor');
   assert.equal(resolveModelBrand('big-pickle'), 'cursor');

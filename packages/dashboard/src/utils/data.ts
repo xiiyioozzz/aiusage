@@ -3,6 +3,8 @@ import {
   type CostCompositionItem,
   type HourlyCostCompositionItem,
   type HourlyProviderTrendItem,
+  type HourlyToolTrendItem,
+  type ToolDailyTrendItem,
   type HourlyTokenCompositionItem,
   type HourlyTrendItem,
   type SankeyGraph,
@@ -11,7 +13,7 @@ import {
 import type { OverviewPayload, FiltersState } from '../hooks/use-overview';
 import { foldRankedSlices } from './fold';
 
-/** Filter overview data to the current site-timezone month and pad empty days with zeros. */
+/** Pad the server's month-scoped series without changing its authoritative aggregates. */
 export function padMonth(ov: OverviewPayload): OverviewPayload {
   const today = ov.today
     ?? ov.dailyTrend.map((d) => d.usageDate).sort().at(-1)
@@ -28,31 +30,12 @@ export function padMonth(ov: OverviewPayload): OverviewPayload {
     outputTokens: 0, reasoningOutputTokens: 0, totalTokens: 0,
   });
 
-  const monthTrend = dailyTrend.filter((d) => d.eventCount > 0 || d.estimatedCostUsd > 0);
-  const totalCostUsd = monthTrend.reduce((sum, d) => sum + Number(d.estimatedCostUsd || 0), 0);
-  const totalEvents = monthTrend.reduce((sum, d) => sum + Number(d.eventCount || 0), 0);
-
-  // Scale share/sankey data by cost ratio (month vs full range)
-  const ratio = ov.totalCostUsd > 0 ? totalCostUsd / ov.totalCostUsd : 0;
-  const eventRatio = ov.totalEvents > 0 ? totalEvents / ov.totalEvents : 0;
-
-  function scaleShares<T extends { estimatedCostUsd: number; eventCount: number; totalTokens?: number }>(items: T[]): T[] {
-    return items.map((it) => ({
-      ...it,
-      estimatedCostUsd: +(it.estimatedCostUsd * ratio).toFixed(4),
-      eventCount: Math.round(it.eventCount * eventRatio),
-      ...(it.totalTokens != null ? { totalTokens: Math.round(it.totalTokens * eventRatio) } : {}),
-    }));
-  }
-
-  const sankey = ov.sankey.nodes.length ? {
-    nodes: ov.sankey.nodes.map((n) => ({ ...n, totalTokens: Math.round(n.totalTokens * ratio) })),
-    links: ov.sankey.links.map((l) => ({ ...l, value: Math.round(l.value * ratio) })),
-  } : ov.sankey;
-
   // Filter provider daily trend to current month
   const monthDateSet = new Set(allDates);
   const providerDailyTrend = (ov.providerDailyTrend ?? []).filter(
+    (item) => monthDateSet.has(item.usageDate),
+  );
+  const toolDailyTrend = (ov.toolDailyTrend ?? []).filter(
     (item) => monthDateSet.has(item.usageDate),
   );
   const costComposition = (ov.costComposition ?? []).filter(
@@ -61,25 +44,11 @@ export function padMonth(ov: OverviewPayload): OverviewPayload {
 
   return {
     ...ov,
-    totalDays: ov.totalDays,
-    activeDays: ov.activeDays,
-    totalEvents,
-    totalCostUsd,
-    averageDailyCostUsd: ov.averageDailyCostUsd,
     dailyTrend,
     providerDailyTrend,
+    toolDailyTrend,
     tokenComposition,
     costComposition,
-    modelCostShare: scaleShares(ov.modelCostShare),
-    channelCostShare: scaleShares(ov.channelCostShare),
-    sankey,
-    filters: {
-      ...ov.filters,
-      options: {
-        ...ov.filters.options,
-        providers: scaleShares(ov.filters.options.providers),
-      },
-    },
   };
 }
 
@@ -233,6 +202,20 @@ export function toHourlyProviderTrend(
     }));
 }
 
+export function toHourlyToolTrend(
+  today: string,
+  nowHour: number,
+  hourly: HourlyToolTrendItem[] | undefined,
+): ToolDailyTrendItem[] {
+  return (hourly ?? [])
+    .filter((row) => row.usageDate === today && row.hour <= nowHour)
+    .map((row) => ({
+      usageDate: hourAxisKey(row.usageDate, row.hour),
+      tool: row.tool,
+      estimatedCostUsd: row.estimatedCostUsd,
+    }));
+}
+
 export function toHourlyTokenComposition(
   today: string,
   nowHour: number,
@@ -268,6 +251,7 @@ export function toHourlyTokenComposition(
 export function selectChartSeries(ov: OverviewPayload | null, range: string): {
   dailyTrend: OverviewPayload['dailyTrend'];
   providerTrend: OverviewPayload['providerDailyTrend'];
+  toolTrend: ToolDailyTrendItem[];
   tokenComposition: OverviewPayload['tokenComposition'];
   costComposition: OverviewPayload['costComposition'];
 } {
@@ -277,6 +261,7 @@ export function selectChartSeries(ov: OverviewPayload | null, range: string): {
     return {
       dailyTrend: ov?.dailyTrend ?? [],
       providerTrend: ov?.providerDailyTrend ?? [],
+      toolTrend: ov?.toolDailyTrend ?? [],
       tokenComposition: ov?.tokenComposition ?? [],
       costComposition: ov?.costComposition ?? [],
     };
@@ -284,6 +269,7 @@ export function selectChartSeries(ov: OverviewPayload | null, range: string): {
   return {
     dailyTrend: toHourlyDailyTrend(today, nowHour, ov.hourlyTrend),
     providerTrend: toHourlyProviderTrend(today, nowHour, ov.hourlyProviderTrend),
+    toolTrend: toHourlyToolTrend(today, nowHour, ov.hourlyToolTrend),
     tokenComposition: toHourlyTokenComposition(today, nowHour, ov.hourlyTokenComposition),
     costComposition: toHourlyCostComposition(today, nowHour, ov.hourlyCostComposition),
   };

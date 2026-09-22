@@ -471,6 +471,41 @@ describe('Fix 2: deduplication of duplicate events', () => {
     }));
   });
 
+  it('同父兄弟会话新增用量相同仍分别计数，归档副本只计一次', async () => {
+    const day = '2025-10-16';
+    const parentId = '019e5b00-0000-7000-8000-000000000001';
+    const children = ['019e5c03-0000-7000-8000-000000000001', '019e5c03-0000-7000-8000-000000000002'];
+    for (const childId of children) {
+      const lines = [
+        { type: 'session_meta', payload: { id: childId, forked_from_id: parentId, cwd: '/same-project' } },
+        { type: 'session_meta', payload: { id: parentId, cwd: '/parent' } },
+        { type: 'turn_context', payload: { turn_id: parentId, model: 'gpt-5-codex' } },
+        {
+          type: 'event_msg', timestamp: `${day}T10:00:00.000Z`,
+          payload: { type: 'token_count', info: {
+            total_token_usage: { input_tokens: 300, output_tokens: 30 },
+            last_token_usage: { input_tokens: 300, output_tokens: 30 },
+          } },
+        },
+        { type: 'event_msg', payload: { type: 'task_started', turn_id: childId } },
+        { type: 'turn_context', payload: { turn_id: childId, model: 'gpt-5-codex' } },
+        {
+          type: 'event_msg', timestamp: `${day}T10:00:02.000Z`,
+          payload: { type: 'token_count', info: {
+            total_token_usage: { input_tokens: 320, output_tokens: 32 },
+            last_token_usage: { input_tokens: 20, output_tokens: 2 },
+          } },
+        },
+      ];
+      await writeSession(join(tmpDir, 'sessions'), `${childId}.jsonl`, lines);
+      await writeSession(join(tmpDir, 'archived_sessions'), `${childId}.jsonl`, lines);
+    }
+
+    expect(await scanCodex(day, tmpDir)).toEqual([
+      expect.objectContaining({ eventCount: 2, inputTokens: 40, outputTokens: 4 }),
+    ]);
+  });
+
   it('session_meta 的初始 workspace 优先于后续 turn_context cwd', async () => {
     const day = '2025-10-16';
     await writeSession(join(tmpDir, 'sessions', '2025', '10', '16'), 'workspace.jsonl', [

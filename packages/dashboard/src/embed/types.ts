@@ -1,11 +1,9 @@
-export type EmbedWidget =
-  | 'stats-row1'
-  | 'stats-row2'
-  | 'cost-trend'
-  | 'token-trend'
-  | 'token-composition'
-  | 'flow'
-  | 'share';
+export const EMBED_WIDGETS = [
+  'stats-row1', 'stats-row2', 'cost-trend', 'tool-trend', 'cost-composition',
+  'token-trend', 'token-composition', 'flow', 'share',
+] as const;
+
+export type EmbedWidget = typeof EMBED_WIDGETS[number];
 
 export type EmbedTheme = 'light' | 'dark' | 'auto';
 export type EmbedLocale = 'en' | 'zh' | 'auto';

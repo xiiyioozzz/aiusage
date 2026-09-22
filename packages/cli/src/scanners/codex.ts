@@ -279,8 +279,9 @@ async function processCodexFile(
       if (nonCachedInput + cachedInput + cacheWriteInput + output + reasoning === 0) continue;
       state.previousTotals = nextTotals;
 
-      const dedupScope = state.sessionForkedFromId
-        ?? state.sessionIdFromMeta
+      // Inherited parent snapshots are already skipped above. New child usage
+      // belongs to the child, even when sibling totals happen to be identical.
+      const dedupScope = state.sessionIdFromMeta
         ?? fileSessionId;
       const signature = total
         ? `codex|${dedupScope}|${state.currentModel}|${total.input}|${total.cached}|${total.cacheWrite}|${total.output}|${total.reasoning}`

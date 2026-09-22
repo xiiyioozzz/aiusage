@@ -1,7 +1,8 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { OTHER_MODEL_KEY, buildQuery, hourAxisKey, padMonth, pivotModelCost, selectChartSeries, toHourlyDailyTrend, transformSankey } from './data';
+import { OTHER_MODEL_KEY, buildQuery, hourAxisKey, padMonth, pivotModelCost, selectChartSeries, toHourlyDailyTrend, toHourlyToolTrend, transformSankey } from './data';
 import { foldRankedSlices } from './fold';
+import { DEMO_OVERVIEW } from '../demo-data';
 
 test('buildQuery encodes multi-select filters as repeated params', () => {
   const query = buildQuery({
@@ -103,6 +104,10 @@ test('padMonth keeps server active/total days and stops at site today', () => {
       { usageDate: '2026-09-15', eventCount: 1, estimatedCostUsd: 0 },
     ],
     providerDailyTrend: [],
+    toolDailyTrend: [
+      { usageDate: '2026-08-31', tool: 'cursor', estimatedCostUsd: 9 },
+      { usageDate: '2026-09-15', tool: 'grok-bot', estimatedCostUsd: 1 },
+    ],
     tokenComposition: [],
     modelCostShare: [],
     channelCostShare: [],
@@ -120,6 +125,51 @@ test('padMonth keeps server active/total days and stops at site today', () => {
   assert.equal(padded.dailyTrend.length, 15);
   assert.equal(padded.dailyTrend[0]?.usageDate, '2026-09-01');
   assert.equal(padded.dailyTrend.at(-1)?.usageDate, '2026-09-15');
+  assert.deepEqual(padded.toolDailyTrend, [
+    { usageDate: '2026-09-15', tool: 'grok-bot', estimatedCostUsd: 1 },
+  ]);
+});
+
+test('padMonth preserves token flow for a zero-cost month', () => {
+  const overview = {
+    ...DEMO_OVERVIEW,
+    today: '2026-09-15',
+    totalCostUsd: 0,
+    totalEvents: 1,
+    dailyTrend: [{ usageDate: '2026-09-15', eventCount: 1, estimatedCostUsd: 0 }],
+    tokenComposition: [{ usageDate: '2026-09-15', inputTokens: 1000, cachedInputTokens: 0, cacheWriteTokens: 0, outputTokens: 0, reasoningOutputTokens: 0, totalTokens: 1000 }],
+    sankey: {
+      nodes: [
+        { id: 'model', label: 'unpriced-model', layer: 0, totalTokens: 1000 },
+        { id: 'project', label: 'project', layer: 1, totalTokens: 1000 },
+      ],
+      links: [{ source: 'model', target: 'project', value: 1000 }],
+    },
+  };
+  const padded = padMonth(overview);
+  assert.deepEqual(padded.sankey, overview.sankey);
+  assert.equal(padded.tokenComposition.reduce((sum, row) => sum + row.totalTokens, 0), 1000);
+  assert.equal(transformSankey(padded.sankey)?.links[0]?.value, 1000);
+});
+
+test('padMonth preserves server aggregates when rounded daily costs have a different sum', () => {
+  const overview = {
+    ...DEMO_OVERVIEW,
+    today: '2026-09-15',
+    totalCostUsd: 0.0001,
+    dailyTrend: [
+      { usageDate: '2026-09-01', eventCount: 1, estimatedCostUsd: 0.0001 },
+      { usageDate: '2026-09-15', eventCount: 1, estimatedCostUsd: 0.0001 },
+    ],
+  };
+  const padded = padMonth(overview);
+  assert.equal(padded.totalCostUsd, overview.totalCostUsd);
+  assert.equal(padded.totalEvents, overview.totalEvents);
+  assert.equal(padded.averageDailyCostUsd, overview.averageDailyCostUsd);
+  assert.deepEqual(padded.sankey, overview.sankey);
+  assert.deepEqual(padded.modelCostShare, overview.modelCostShare);
+  assert.deepEqual(padded.channelCostShare, overview.channelCostShare);
+  assert.deepEqual(padded.filters.options, overview.filters.options);
 });
 
 test('pivotModelCost stacks daily cost by model and folds the tail', () => {
@@ -160,6 +210,16 @@ test('pads today hourly bars through the current site hour', () => {
   assert.equal(rows[3]?.eventCount, 0);
 });
 
+test('pads today hourly tool bars through the current site hour', () => {
+  const rows = toHourlyToolTrend('2026-09-15', 3, [
+    { usageDate: '2026-09-15', hour: 1, tool: 'grok-bot', estimatedCostUsd: 4 },
+    { usageDate: '2026-09-15', hour: 4, tool: 'cursor', estimatedCostUsd: 9 },
+  ]);
+  assert.deepEqual(rows, [
+    { usageDate: hourAxisKey('2026-09-15', 1), tool: 'grok-bot', estimatedCostUsd: 4 },
+  ]);
+});
+
 test('selectChartSeries keeps daily grain outside today', () => {
   const selected = selectChartSeries({
     ok: true,
@@ -181,6 +241,38 @@ test('selectChartSeries keeps daily grain outside today', () => {
     sankey: { nodes: [], links: [] },
     filters: { selection: { range: '7d', deviceId: [], provider: [], product: [], channel: [], model: [], project: [] }, options: { devices: [], providers: [], products: [], channels: [], models: [], projects: [] } },
     hourlyTrend: [{ usageDate: '2026-09-15', hour: 9, eventCount: 8, estimatedCostUsd: 3 }],
+    toolDailyTrend: [{ usageDate: '2026-09-15', tool: 'cursor', estimatedCostUsd: 1 }],
+    hourlyToolTrend: [{ usageDate: '2026-09-15', hour: 9, tool: 'grok-bot', estimatedCostUsd: 3 }],
   }, '7d');
   assert.equal(selected.dailyTrend[0]?.usageDate, '2026-09-15');
+  assert.equal(selected.toolTrend[0]?.tool, 'cursor');
+});
+
+test('selectChartSeries uses hourly tool grain for today', () => {
+  const selected = selectChartSeries({
+    ok: true,
+    today: '2026-09-15',
+    nowHour: 10,
+    totalDays: 1,
+    activeDays: 1,
+    totalEvents: 1,
+    totalSessions: 0,
+    costBearingEvents: 1,
+    totalCostUsd: 1,
+    averageDailyCostUsd: 1,
+    dailyTrend: [{ usageDate: '2026-09-15', eventCount: 1, estimatedCostUsd: 1 }],
+    providerDailyTrend: [],
+    toolDailyTrend: [{ usageDate: '2026-09-15', tool: 'cursor', estimatedCostUsd: 1 }],
+    tokenComposition: [],
+    heatmap: [],
+    modelCostShare: [],
+    channelCostShare: [],
+    sankey: { nodes: [], links: [] },
+    filters: { selection: { range: 'today', deviceId: [], provider: [], product: [], channel: [], model: [], project: [] }, options: { devices: [], providers: [], products: [], channels: [], models: [], projects: [] } },
+    hourlyTrend: [{ usageDate: '2026-09-15', hour: 9, eventCount: 8, estimatedCostUsd: 3 }],
+    hourlyToolTrend: [{ usageDate: '2026-09-15', hour: 9, tool: 'grok-bot', estimatedCostUsd: 3 }],
+  }, 'today');
+  assert.deepEqual(selected.toolTrend, [
+    { usageDate: hourAxisKey('2026-09-15', 9), tool: 'grok-bot', estimatedCostUsd: 3 },
+  ]);
 });

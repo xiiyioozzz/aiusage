@@ -1,8 +1,24 @@
-import type { Channel, IngestActivityItem, IngestDay, IngestPayload, CostStatus } from '@aiusage/shared';
+import type { Channel, IngestActivityItem, IngestDay, IngestPayload, CostStatus, PricingUsage } from '@aiusage/shared';
+import { resolveLiveCatalog } from '@aiusage/shared';
 import { jsonOk, jsonError } from '../utils/response.js';
 import { verifyDeviceToken } from '../utils/token.js';
-import { calculateIngestBreakdownCost, getWorstCostStatus } from '../utils/pricing.js';
+import { calculateIngestBreakdownCost, getPricingCatalog, getWorstCostStatus } from '../utils/pricing.js';
 import type { Env } from '../types.js';
+
+function collectIngestUsages(days: IngestDay[]): PricingUsage[] {
+  const usages: PricingUsage[] = [];
+  for (const day of days) {
+    for (const breakdown of day.breakdowns ?? []) {
+      usages.push({ provider: breakdown.provider, product: breakdown.product, model: breakdown.model });
+    }
+    for (const bucket of day.hourly ?? []) {
+      for (const breakdown of bucket.breakdowns ?? []) {
+        usages.push({ provider: breakdown.provider, product: breakdown.product, model: breakdown.model });
+      }
+    }
+  }
+  return usages;
+}
 
 export async function handleIngest(request: Request, env: Env): Promise<Response> {
   // 校验 DEVICE_TOKEN
@@ -35,6 +51,7 @@ export async function handleIngest(request: Request, env: Env): Promise<Response
 
   const now = new Date().toISOString();
   const costSummary: Record<string, { estimatedCostUsd: number; costStatus: CostStatus }> = {};
+  const pricingCatalog = await resolveLiveCatalog(getPricingCatalog(), collectIngestUsages(body.days ?? []));
 
   for (const day of body.days) {
     const costStatuses: CostStatus[] = [];
@@ -51,7 +68,7 @@ export async function handleIngest(request: Request, env: Env): Promise<Response
     for (const b of day.breakdowns) {
       const cacheWrite5mTokens = b.cacheWrite5mTokens ?? b.cacheWriteTokens;
       const cacheWrite1hTokens = b.cacheWrite1hTokens ?? 0;
-      const cost = calculateIngestBreakdownCost(b);
+      const cost = calculateIngestBreakdownCost(b, pricingCatalog);
 
       costStatuses.push(cost.costStatus);
       dayTotalCost += cost.estimatedCostUsd;
@@ -150,6 +167,7 @@ export async function handleIngest(request: Request, env: Env): Promise<Response
           JSON.stringify({
             cache_write_5m_tokens: cacheWrite5mTokens,
             cache_write_1h_tokens: cacheWrite1hTokens,
+            token_quality: b.tokenQuality === 'estimated' ? 'estimated' : 'reported',
           }),
           now, now,
         )
@@ -163,7 +181,7 @@ export async function handleIngest(request: Request, env: Env): Promise<Response
         for (const b of bucket.breakdowns ?? []) {
           const cacheWrite5mTokens = b.cacheWrite5mTokens ?? b.cacheWriteTokens;
           const cacheWrite1hTokens = b.cacheWrite1hTokens ?? 0;
-          const cost = calculateIngestBreakdownCost(b);
+          const cost = calculateIngestBreakdownCost(b, pricingCatalog);
           const rawProject = b.project || 'unknown';
           const isFullPath = rawProject.startsWith('/') || /^[A-Z]:\\/i.test(rawProject);
           const projectDisplay = b.projectDisplay ?? (isFullPath ? rawProject.split('/').filter(Boolean).pop() || 'unknown' : rawProject);
@@ -204,6 +222,7 @@ export async function handleIngest(request: Request, env: Env): Promise<Response
               JSON.stringify({
                 cache_write_5m_tokens: cacheWrite5mTokens,
                 cache_write_1h_tokens: cacheWrite1hTokens,
+                token_quality: b.tokenQuality === 'estimated' ? 'estimated' : 'reported',
               }),
               now, now,
             )
@@ -212,43 +231,25 @@ export async function handleIngest(request: Request, env: Env): Promise<Response
       }
     }
 
-    await replaceActivityMetrics(env, tokenPayload.deviceId, day.usageDate, day.activity?.items ?? [], now);
+    // Token-only imports do not replace activity. Explicit activity snapshots
+    // replace only their represented products, preserving other local tools.
+    if (day.activity) {
+      const activityProducts = new Set(products);
+      for (const item of day.activity.items) activityProducts.add(item.product || 'unknown');
+      await replaceActivityMetrics(
+        env, tokenPayload.deviceId, day.usageDate, day.activity.items, [...activityProducts], now,
+      );
+    }
 
-    // 计算 top project / model 并回填 daily_usage
-    const topProject = await env.DB.prepare(`
-      SELECT COALESCE(project_alias, project_display) as project, SUM(estimated_cost_usd) as total_cost
-      FROM daily_usage_breakdown
+    await refreshDailyUsageCost(env, tokenPayload.deviceId, day.usageDate, now);
+    const refreshed = await env.DB.prepare(`
+      SELECT estimated_cost_usd, cost_status FROM daily_usage
       WHERE device_id = ? AND usage_date = ?
-      GROUP BY COALESCE(project_alias, project_display) ORDER BY total_cost DESC LIMIT 1
-    `).bind(tokenPayload.deviceId, day.usageDate)
-      .first<{ project: string; total_cost: number }>();
-
-    const topModel = await env.DB.prepare(`
-      SELECT model, SUM(estimated_cost_usd) as total_cost
-      FROM daily_usage_breakdown
-      WHERE device_id = ? AND usage_date = ?
-      GROUP BY model ORDER BY total_cost DESC LIMIT 1
-    `).bind(tokenPayload.deviceId, day.usageDate)
-      .first<{ model: string; total_cost: number }>();
-
-    await env.DB.prepare(`
-      UPDATE daily_usage
-      SET top_project_by_cost = ?, top_project_cost_usd = ?,
-          top_model_by_cost = ?, top_model_cost_usd = ?,
-          updated_at = ?
-      WHERE device_id = ? AND usage_date = ?
-    `)
-      .bind(
-        topProject?.project ?? 'unknown', topProject?.total_cost ?? 0,
-        topModel?.model ?? 'unknown', topModel?.total_cost ?? 0,
-        now,
-        tokenPayload.deviceId, day.usageDate,
-      )
-      .run();
+    `).bind(tokenPayload.deviceId, day.usageDate).first<{ estimated_cost_usd: number; cost_status: CostStatus }>();
 
     costSummary[day.usageDate] = {
-      estimatedCostUsd: Math.round(dayTotalCost * 10000) / 10000,
-      costStatus: dayCostStatus,
+      estimatedCostUsd: Math.round(Number(refreshed?.estimated_cost_usd ?? dayTotalCost) * 10000) / 10000,
+      costStatus: refreshed?.cost_status ?? dayCostStatus,
     };
   }
 
@@ -283,21 +284,48 @@ export async function handleReprice(request: Request, env: Env): Promise<Respons
   const product = new URL(request.url).searchParams.get('product')?.trim() || null;
   const now = new Date().toISOString();
   const dates = new Set<string>();
+  const listed = await env.DB.prepare(`
+    SELECT provider, product, model FROM daily_usage_breakdown WHERE device_id = ?
+    UNION
+    SELECT provider, product, model FROM hourly_usage_breakdown WHERE device_id = ?
+  `).bind(tokenPayload.deviceId, tokenPayload.deviceId).all<PricingUsage>();
+  const pricingCatalog = await resolveLiveCatalog(getPricingCatalog(), listed.results ?? []);
+  const rowsUpdated = await repriceTable(env, 'daily_usage_breakdown', tokenPayload.deviceId, product, now, dates, pricingCatalog);
+  const hourlyRowsUpdated = await repriceTable(env, 'hourly_usage_breakdown', tokenPayload.deviceId, product, now, dates, pricingCatalog);
+
+  for (const usageDate of dates) {
+    await refreshDailyUsageCost(env, tokenPayload.deviceId, usageDate, now);
+  }
+
+  return jsonOk({ rowsUpdated, hourlyRowsUpdated, daysUpdated: dates.size });
+}
+
+async function repriceTable(
+  env: Env,
+  table: 'daily_usage_breakdown' | 'hourly_usage_breakdown',
+  deviceId: string,
+  product: string | null,
+  now: string,
+  dates: Set<string>,
+  pricingCatalog?: Parameters<typeof calculateIngestBreakdownCost>[1],
+): Promise<number> {
+  const isHourly = table === 'hourly_usage_breakdown';
   let rowsUpdated = 0;
   let offset = 0;
 
   while (true) {
     const page = await env.DB.prepare(`
-      SELECT usage_date, provider, product, channel, model, project, event_count,
+      SELECT ${isHourly ? 'usage_hour,' : ''} usage_date, provider, product, channel, model, project, event_count,
              input_tokens, cached_input_tokens, cache_write_tokens, output_tokens,
              reasoning_output_tokens, extra_metrics_json
-      FROM daily_usage_breakdown
+      FROM ${table}
       WHERE device_id = ?
         AND (? IS NULL OR product = ?)
-      ORDER BY usage_date, provider, product, channel, model, project
+      ORDER BY usage_date, ${isHourly ? 'usage_hour,' : ''} provider, product, channel, model, project
       LIMIT 100 OFFSET ?
-    `).bind(tokenPayload.deviceId, product, product, offset).all<{
+    `).bind(deviceId, product, product, offset).all<{
       usage_date: string;
+      usage_hour?: number;
       provider: string;
       product: string;
       channel: string;
@@ -331,25 +359,28 @@ export async function handleReprice(request: Request, env: Env): Promise<Respons
         cacheWrite1hTokens: extra.cacheWrite1hTokens ?? 0,
         outputTokens: Number(row.output_tokens ?? 0),
         reasoningOutputTokens: Number(row.reasoning_output_tokens ?? 0),
-      });
+        tokenQuality: extra.tokenQuality,
+      }, pricingCatalog);
       dates.add(row.usage_date);
       return env.DB.prepare(`
-        UPDATE daily_usage_breakdown
+        UPDATE ${table}
         SET estimated_cost_usd = ?, cost_status = ?, pricing_version = ?, updated_at = ?
         WHERE device_id = ? AND usage_date = ? AND provider = ? AND product = ?
           AND channel = ? AND model = ? AND project = ?
+          ${isHourly ? 'AND usage_hour = ?' : ''}
       `).bind(
         cost.estimatedCostUsd,
         cost.costStatus,
         cost.pricingVersion,
         now,
-        tokenPayload.deviceId,
+        deviceId,
         row.usage_date,
         row.provider,
         row.product,
         row.channel,
         row.model,
         row.project,
+        ...(isHourly ? [row.usage_hour!] : []),
       );
     });
 
@@ -359,16 +390,13 @@ export async function handleReprice(request: Request, env: Env): Promise<Respons
     if (rows.length < 100) break;
   }
 
-  for (const usageDate of dates) {
-    await refreshDailyUsageCost(env, tokenPayload.deviceId, usageDate, now);
-  }
-
-  return jsonOk({ rowsUpdated, daysUpdated: dates.size });
+  return rowsUpdated;
 }
 
-function parseExtraMetrics(raw: string | null): {
+export function parseExtraMetrics(raw: string | null): {
   cacheWrite5mTokens?: number;
   cacheWrite1hTokens?: number;
+  tokenQuality?: 'estimated' | 'reported';
 } {
   if (!raw) return {};
   try {
@@ -378,27 +406,46 @@ function parseExtraMetrics(raw: string | null): {
     return {
       cacheWrite5mTokens: Number.isFinite(cacheWrite5mTokens) ? cacheWrite5mTokens : undefined,
       cacheWrite1hTokens: Number.isFinite(cacheWrite1hTokens) ? cacheWrite1hTokens : undefined,
+      tokenQuality: parsed.token_quality === 'estimated' ? 'estimated' : 'reported',
     };
   } catch {
     return {};
   }
 }
 
-async function refreshDailyUsageCost(
+export async function refreshDailyUsageCost(
   env: Env,
   deviceId: string,
   usageDate: string,
   now: string,
 ): Promise<void> {
-  const rows = await env.DB.prepare(`
-    SELECT estimated_cost_usd, cost_status
+  const totals = await env.DB.prepare(`
+    SELECT
+      COALESCE(SUM(event_count), 0) AS event_count,
+      COALESCE(SUM(input_tokens), 0) AS input_tokens,
+      COALESCE(SUM(cached_input_tokens), 0) AS cached_input_tokens,
+      COALESCE(SUM(cache_write_tokens), 0) AS cache_write_tokens,
+      COALESCE(SUM(output_tokens), 0) AS output_tokens,
+      COALESCE(SUM(reasoning_output_tokens), 0) AS reasoning_output_tokens,
+      COALESCE(SUM(estimated_cost_usd), 0) AS estimated_cost_usd
     FROM daily_usage_breakdown
     WHERE device_id = ? AND usage_date = ?
-  `).bind(deviceId, usageDate).all<{ estimated_cost_usd: number; cost_status: CostStatus }>();
+  `).bind(deviceId, usageDate).first<{
+    event_count: number;
+    input_tokens: number;
+    cached_input_tokens: number;
+    cache_write_tokens: number;
+    output_tokens: number;
+    reasoning_output_tokens: number;
+    estimated_cost_usd: number;
+  }>();
 
-  const breakdowns = rows.results ?? [];
-  const dayTotalCost = breakdowns.reduce((sum, row) => sum + Number(row.estimated_cost_usd ?? 0), 0);
-  const dayCostStatus = getWorstCostStatus(breakdowns.map((row) => row.cost_status));
+  const rows = await env.DB.prepare(`
+    SELECT cost_status
+    FROM daily_usage_breakdown
+    WHERE device_id = ? AND usage_date = ?
+  `).bind(deviceId, usageDate).all<{ cost_status: CostStatus }>();
+  const dayCostStatus = getWorstCostStatus((rows.results ?? []).map((row) => row.cost_status));
 
   const topProject = await env.DB.prepare(`
     SELECT COALESCE(project_alias, project_display) as project, SUM(estimated_cost_usd) as total_cost
@@ -418,13 +465,21 @@ async function refreshDailyUsageCost(
 
   await env.DB.prepare(`
     UPDATE daily_usage
-    SET estimated_cost_usd = ?, cost_status = ?, pricing_version = ?,
+    SET event_count = ?, input_tokens = ?, cached_input_tokens = ?,
+        cache_write_tokens = ?, output_tokens = ?, reasoning_output_tokens = ?,
+        estimated_cost_usd = ?, cost_status = ?, pricing_version = ?,
         top_project_by_cost = ?, top_project_cost_usd = ?,
         top_model_by_cost = ?, top_model_cost_usd = ?,
         updated_at = ?
     WHERE device_id = ? AND usage_date = ?
   `).bind(
-    Math.round(dayTotalCost * 10000) / 10000,
+    Number(totals?.event_count ?? 0),
+    Number(totals?.input_tokens ?? 0),
+    Number(totals?.cached_input_tokens ?? 0),
+    Number(totals?.cache_write_tokens ?? 0),
+    Number(totals?.output_tokens ?? 0),
+    Number(totals?.reasoning_output_tokens ?? 0),
+    Math.round(Number(totals?.estimated_cost_usd ?? 0) * 10000) / 10000,
     dayCostStatus,
     'current',
     topProject?.project ?? 'unknown',
@@ -439,6 +494,9 @@ async function refreshDailyUsageCost(
 
 function productsInDay(day: IngestDay): Set<string> {
   const products = new Set<string>();
+  for (const product of day.replacedProducts ?? []) {
+    if (product) products.add(product);
+  }
   for (const breakdown of day.breakdowns) {
     if (breakdown.product) products.add(breakdown.product);
   }
@@ -478,11 +536,14 @@ async function replaceActivityMetrics(
   deviceId: string,
   usageDate: string,
   items: IngestActivityItem[],
+  products: string[],
   now: string,
 ): Promise<void> {
+  if (products.length === 0) return;
   try {
-    await env.DB.prepare('DELETE FROM daily_activity_breakdown WHERE device_id = ? AND usage_date = ?')
-      .bind(deviceId, usageDate)
+    const placeholders = products.map(() => '?').join(', ');
+    await env.DB.prepare(`DELETE FROM daily_activity_breakdown WHERE device_id = ? AND usage_date = ? AND product IN (${placeholders})`)
+      .bind(deviceId, usageDate, ...products)
       .run();
 
     for (const item of items) {

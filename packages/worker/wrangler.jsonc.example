@@ -23,6 +23,8 @@
   // - DEVICE_TOKEN_SECRET
   // - PROJECT_NAME_SALT
   "vars": {
+    // Optional: set PUBLIC_HOST to your own custom hostname to redirect workers.dev.
+    // Without it, the dashboard is served directly from this Worker.
     "MAX_DEVICES": "10",
     "PUBLIC_PROJECT_VISIBILITY": "masked",
     "DEFAULT_TIMEZONE": "Asia/Shanghai"

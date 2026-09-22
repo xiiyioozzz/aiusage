@@ -1,11 +1,9 @@
 import type {
   EmbedParams, EmbedWidget, EmbedTheme, EmbedLocale, EmbedCurrency,
 } from './types';
+import { EMBED_WIDGETS } from './types';
 
-const VALID_WIDGETS = new Set<EmbedWidget>([
-  'stats-row1', 'stats-row2', 'cost-trend', 'token-trend',
-  'token-composition', 'flow', 'share',
-]);
+const VALID_WIDGETS = new Set<EmbedWidget>(EMBED_WIDGETS);
 
 export function parseEmbedParams(search: string): EmbedParams {
   const p = new URLSearchParams(search);

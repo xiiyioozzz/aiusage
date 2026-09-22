@@ -3,9 +3,12 @@
  * 历史 ModelPricing / PricingCatalog 类型保留 re-export 以兼容现有调用。
  */
 import { calculateCost as calculateSharedCost } from '@aiusage/shared';
-import type { CostCalcResult, IngestBreakdown } from '@aiusage/shared';
+import type { CostCalcResult, IngestBreakdown, PricingCatalog } from '@aiusage/shared';
 
-export function calculateIngestBreakdownCost(breakdown: IngestBreakdown): CostCalcResult {
+export function calculateIngestBreakdownCost(
+  breakdown: IngestBreakdown,
+  catalog?: PricingCatalog,
+): CostCalcResult {
   const calculated = calculateSharedCost(
     breakdown.provider,
     breakdown.product,
@@ -16,22 +19,33 @@ export function calculateIngestBreakdownCost(breakdown: IngestBreakdown): CostCa
       cacheWriteTokens: breakdown.cacheWriteTokens,
       cacheWrite5mTokens: breakdown.cacheWrite5mTokens ?? breakdown.cacheWriteTokens,
       cacheWrite1hTokens: breakdown.cacheWrite1hTokens ?? 0,
-      outputTokens: breakdown.outputTokens,
+      // Ingest stores visible output and reasoning separately; both are billed.
+      outputTokens: breakdown.outputTokens + (breakdown.reasoningOutputTokens ?? 0),
     },
-    { requestCount: breakdown.eventCount },
+    {
+      requestCount: breakdown.eventCount,
+      ...(catalog ? { catalog } : {}),
+    },
   );
 
-  const hasVendorReportedCost = breakdown.product === 'trae-intl' || breakdown.product === 'opencode';
+  const hasVendorReportedCost = breakdown.product === 'trae-intl'
+    || breakdown.product === 'opencode';
   if (
     breakdown.costUSD == null ||
     !Number.isFinite(breakdown.costUSD) ||
     breakdown.costUSD <= 0 ||
     (!hasVendorReportedCost && breakdown.pricingVersion !== calculated.pricingVersion)
   ) {
-    return calculated;
+    return breakdown.tokenQuality === 'estimated' && calculated.costStatus !== 'unavailable'
+      ? { ...calculated, costStatus: 'estimated' }
+      : calculated;
   }
 
-  return { ...calculated, estimatedCostUsd: breakdown.costUSD, costStatus: 'exact' };
+  return {
+    ...calculated,
+    estimatedCostUsd: breakdown.costUSD,
+    costStatus: breakdown.tokenQuality === 'estimated' ? 'estimated' : 'exact',
+  };
 }
 
 export {

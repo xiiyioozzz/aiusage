@@ -14,7 +14,8 @@ import {
 } from '../utils/format';
 
 import { KpiCard } from '../components/kpi-card';
-import { CostTrendChart } from '../components/cost-trend-chart';
+import { UsageEstimateNotice } from '../components/usage-estimate-notice';
+import { CostTrendChart, ToolTrendChart } from '../components/cost-trend-chart';
 import { CostCompositionChart } from '../components/cost-composition-chart';
 import { TokenTrendChart } from '../components/token-trend-chart';
 import { TokenCompositionChart } from '../components/token-composition-chart';
@@ -190,6 +191,25 @@ function WidgetRenderer({
               <CostTrendChart
                 data={chartSeries.dailyTrend}
                 providerTrend={chartSeries.providerTrend}
+                currency={currency}
+              />
+            </ChartBoundary>
+          )}
+        </>
+      );
+
+    /* ── Tool Trend ── */
+    case 'tool-trend':
+      return (
+        <>
+          <SectionHeader title={t.toolTrend} stat={unavailable ? t.unavailable : formatUsd(overview?.totalCostUsd ?? 0, currency)} />
+          {unavailable ? (
+            <EmptyState label={t.costUnavailable} />
+          ) : (
+            <ChartBoundary name="Tool Trend">
+              <ToolTrendChart
+                data={chartSeries.dailyTrend}
+                toolTrend={chartSeries.toolTrend}
                 currency={currency}
               />
             </ChartBoundary>
@@ -407,13 +427,18 @@ export function EmbedApp() {
     () => ({ range: params.range, deviceId: params.deviceId, product: params.product }),
     [params.range, params.deviceId, params.product],
   );
-  const { overview, kpis, metricAvailability, loading, error } = useOverview(filters);
+  const { overview, kpis, metricAvailability, loading, error, isDemo, refresh } = useOverview(filters);
 
   let content: React.ReactNode;
   if (!params.widget) {
     content = <div className="p-4 text-sm text-slate-400">Missing ?widget= parameter</div>;
   } else if (error) {
-    content = <div className="p-4 text-sm text-red-400">{error}</div>;
+    content = (
+      <div role="alert" className="p-4 text-sm text-red-400">
+        <div>{t.failedToLoad}: {error}</div>
+        <button type="button" onClick={refresh} className="mt-3 underline">{t.refresh}</button>
+      </div>
+    );
   } else if (loading && !overview) {
     content = <LoadingSkeleton />;
   } else {
@@ -434,6 +459,8 @@ export function EmbedApp() {
 
   return (
     <div className="embed-root">
+      {isDemo && <div role="status" className="mb-3 rounded-md bg-amber-50 p-3 text-xs text-amber-900 dark:bg-amber-500/10 dark:text-amber-200">{t.demoBanner}</div>}
+      <UsageEstimateNotice estimatedTokenCount={overview?.estimatedTokenCount} locale={locale} />
       {content}
     </div>
   );

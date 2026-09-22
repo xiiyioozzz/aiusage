@@ -14,14 +14,16 @@ import { scanDroidDates } from './scanners/droid.js';
 import { scanOpencodeDates } from './scanners/opencode.js';
 import { scanPiDates } from './scanners/pi.js';
 import { scanTraeDates } from './scanners/trae.js';
+import { scanGrokDates } from './scanners/grok.js';
 
 import type { IngestBreakdown, IngestHourlyBucket } from '@aiusage/shared';
-import { mergeHourlyResults, takeHourly } from './scanners/utils.js';
+import { emptyResult, mergeHourlyResults, takeHourly } from './scanners/utils.js';
 
 export interface ScanResult {
   usageDate: string;
   breakdowns: IngestBreakdown[];
   hourly?: IngestHourlyBucket[];
+  replacedProducts?: string[];
   totals: {
     eventCount: number;
     inputTokens: number;
@@ -50,6 +52,7 @@ export const TOOL_IDS = [
   'cursor',
   'droid',
   'gemini-cli',
+  'grok',
   'hermes',
   'kimi-code',
   'kiro',
@@ -107,16 +110,21 @@ export async function scanDates(targetDates: string[], options: ScanOptions = {}
   if (uniqueDates.length === 0) return [];
 
   const selected = options.tools ? new Set(options.tools) : undefined;
+  const cursorDays = !selected || selected.has('cursor')
+    ? await scanCursorDates(uniqueDates, { projectAliases: options.projectAliases })
+    : undefined;
+  const replacedProducts = cursorDays ? ['cursor'] : [];
   const scannerDefinitions: Array<{ products: string[]; scan: () => Promise<Map<string, IngestBreakdown[]>> }> = [
     { products: ['antigravity'], scan: () => scanAntigravityDates(uniqueDates) },
     { products: ['claude-code'], scan: () => scanClaudeDates(uniqueDates, undefined, options.projectAliases) },
     { products: ['codex'], scan: () => scanCodexDates(uniqueDates, undefined, options.projectAliases) },
     { products: ['copilot-cli'], scan: () => scanCopilotDates(uniqueDates, undefined, options.projectAliases) },
     { products: ['copilot-vscode'], scan: () => scanCopilotVscodeDates(uniqueDates, undefined, options.projectAliases) },
-    { products: ['cursor'], scan: () => scanCursorDates(uniqueDates, { projectAliases: options.projectAliases }) },
+    { products: ['cursor'], scan: async () => cursorDays ?? emptyResult(new Set(uniqueDates)) },
     { products: ['kiro'], scan: () => scanKiroDates(uniqueDates, undefined, options.projectAliases, { proxyDataDirs: options.kiroProxyDataDirs }) },
     { products: ['hermes'], scan: () => scanHermesDates(uniqueDates, { projectAliases: options.projectAliases }) },
     { products: ['gemini-cli'], scan: () => scanGeminiDates(uniqueDates, undefined, options.projectAliases) },
+    { products: ['grok'], scan: () => scanGrokDates(uniqueDates, undefined, options.projectAliases) },
     { products: ['qwen-code'], scan: () => scanQwenDates(uniqueDates, undefined, options.projectAliases) },
     { products: ['kimi-code'], scan: () => scanKimiDates(uniqueDates, undefined, options.projectAliases) },
     { products: ['amp'], scan: () => scanAmpDates(uniqueDates, undefined, options.projectAliases) },
@@ -160,7 +168,7 @@ export async function scanDates(targetDates: string[], options: ScanOptions = {}
     );
     const hourly = serializeHourly(takeHourly(hourlyMerged)?.get(usageDate), selected);
 
-    return { usageDate, breakdowns, hourly, totals };
+    return { usageDate, breakdowns, hourly, replacedProducts, totals };
   });
 }
 

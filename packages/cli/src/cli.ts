@@ -412,9 +412,14 @@ async function runSync(flags: Record<string, string | boolean>, positionals: str
         }))
         .filter((bucket) => bucket.breakdowns.length > 0);
       const activity = activityByDate.get(usageDate);
-      return { usageDate, breakdowns, hourly, activity };
+      const replacedProducts = result?.replacedProducts?.filter(Boolean);
+      return { usageDate, breakdowns, hourly, activity, replacedProducts };
     })
-    .filter(day => day.breakdowns.length > 0 || (day.activity?.items.length ?? 0) > 0);
+    .filter(day =>
+      day.breakdowns.length > 0
+      || (day.activity?.items.length ?? 0) > 0
+      || (day.replacedProducts?.length ?? 0) > 0
+    );
 
   if (allDays.length === 0) {
     console.log('没有可上传的数据。');

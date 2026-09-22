@@ -167,6 +167,7 @@ export async function runDoctor(lang: Lang = 'zh'): Promise<Check[]> {
     { dirs: [join(home, 'Library', 'Application Support', 'Cursor', 'User', 'globalStorage')], label: 'Cursor', exts: ['.vscdb'] },
     { dirs: [join(home, '.kiro', 'sessions')], label: 'Kiro', exts: ['.jsonl'] },
     { dirs: [join(home, '.hermes')], label: 'Hermes', exts: ['.db'] },
+    { dirs: [join(home, '.grok', 'sessions')], label: 'Grok Build', exts: ['.jsonl'] },
     { dirs: [join(home, '.codex')], label: 'ChatGPT / Codex CLI', exts: ['.jsonl'] },
     { dirs: [join(home, '.copilot', 'session-state'), join(home, '.copilot', 'otel')], label: 'Copilot CLI', exts: ['.jsonl'] },
     {

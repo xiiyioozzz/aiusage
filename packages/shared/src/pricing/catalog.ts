@@ -11,7 +11,7 @@ import { sourcegraph } from './data/sourcegraph.js';
 import { inflection, cursor, droid, opencode, kiro, hermes } from './data/placeholders.js';
 import { xai } from './data/xai.js';
 
-export const PRICING_VERSION = '2026-09-15-cursor-hermes-list-v1';
+export const PRICING_VERSION = '2026-09-22-grok-4.7';
 
 /**
  * 模型别名（精确匹配优先于前缀回退）。
@@ -37,6 +37,9 @@ const aliases: Record<string, string> = {
   'codex-auto-review': 'gpt-5.4',
   'k3': 'kimi-k3',
   'kimi-code/k3': 'kimi-k3',
+  'grok-4.6-build': 'grok-4.6',
+  'grok-4.7-build': 'grok-4.7',
+  'grok-4-7': 'grok-4.7',
 };
 
 export const catalog: PricingCatalog = {

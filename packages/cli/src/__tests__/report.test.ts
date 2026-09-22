@@ -26,6 +26,41 @@ afterEach(async () => {
 });
 
 describe('buildLocalReport', () => {
+  it('includes reasoning output when repricing an older Codex estimate', async () => {
+    const { calculateBreakdownCost } = await import('../report.js');
+    const warnings = new Set<string>();
+    const cost = calculateBreakdownCost({
+      provider: 'openai', product: 'codex', channel: 'cli', model: 'gpt-5.5',
+      project: 'fixture', eventCount: 1, inputTokens: 0, cachedInputTokens: 0,
+      cacheWriteTokens: 0, outputTokens: 100, reasoningOutputTokens: 900,
+      costUSD: 0.03, pricingVersion: 'old-version',
+    }, warnings);
+    expect(cost).toBe(0.03);
+  });
+
+  it('warns explicitly when Kiro tokens are estimated locally', async () => {
+    const { calculateBreakdownCost } = await import('../report.js');
+    const warnings = new Set<string>();
+    calculateBreakdownCost({
+      provider: 'anthropic', product: 'kiro', channel: 'ide', model: 'claude-sonnet-4-6',
+      project: 'fixture', eventCount: 1, inputTokens: 100, cachedInputTokens: 0,
+      cacheWriteTokens: 0, outputTokens: 10, reasoningOutputTokens: 0,
+      tokenQuality: 'estimated',
+    }, warnings);
+    expect([...warnings].some((warning) => warning.includes('不是官方账单'))).toBe(true);
+  });
+
+  it('reprices stale Kiro IDE rows from the public API catalog', async () => {
+    const { calculateBreakdownCost } = await import('../report.js');
+    const warnings = new Set<string>();
+    const cost = calculateBreakdownCost({
+      provider: 'anthropic', product: 'kiro', channel: 'ide', model: 'claude-opus-4.8',
+      project: 'fixture', eventCount: 1, inputTokens: 1_000_000, cachedInputTokens: 0,
+      cacheWriteTokens: 0, outputTokens: 0, reasoningOutputTokens: 0,
+      tokenQuality: 'estimated', costUSD: 0.4, pricingVersion: 'stale-catalog',
+    }, warnings);
+    expect(cost).toBe(5);
+  });
   it('discovers Gemini logs, Copilot VS Code workspace sessions, and Antigravity metadata in all-history reports', async () => {
     await mkdir(join(homeDir, '.gemini', 'tmp', 'project-a'), { recursive: true });
     await writeFile(

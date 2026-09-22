@@ -31,6 +31,7 @@ export const PROVIDER_COLORS: Record<string, string> = {
   kiro: '#f59e0b',
   hermes: '#0ea5e9',
   cursor: '#111827',
+  xai: '#111827',
 };
 
 export const PROVIDER_LABELS: Record<string, string> = {
@@ -48,6 +49,7 @@ export const PROVIDER_LABELS: Record<string, string> = {
   kiro: 'Kiro',
   hermes: 'Hermes',
   cursor: 'Cursor',
+  xai: 'xAI',
 };
 
 export function providerLabel(id: string): string {
@@ -82,7 +84,10 @@ export function formatProductLabel(raw: string): string {
     kiro: 'Kiro',
     hermes: 'Hermes',
     cursor: 'Cursor',
+    'grok-bot': 'Grok Bot',
+    'claude-code': 'Claude Code',
     codex: 'ChatGPT',
+    grok: 'Grok Build',
   };
   if (labels[raw]) return labels[raw];
   return raw

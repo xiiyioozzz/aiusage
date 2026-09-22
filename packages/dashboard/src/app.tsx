@@ -17,8 +17,9 @@ import type { FiltersState, FacetOption } from './hooks/use-overview';
 import { useOverview } from './hooks/use-overview';
 import { ChartBoundary, EmptyState, Skeleton, SectionHeader, ChartLegend } from './components/chart-helpers';
 import { KpiCard, CostKpiCard } from './components/kpi-card';
+import { UsageEstimateNotice } from './components/usage-estimate-notice';
 import { useFetchCnyRate, useCurrencyStore } from './hooks/use-cny-rate';
-import { CostTrendChart } from './components/cost-trend-chart';
+import { CostTrendChart, ToolTrendChart } from './components/cost-trend-chart';
 import { CostCompositionChart } from './components/cost-composition-chart';
 import { TokenTrendChart } from './components/token-trend-chart';
 import { TokenCompositionChart } from './components/token-composition-chart';
@@ -467,6 +468,8 @@ export function App() {
         </div>
       )}
 
+      <UsageEstimateNotice estimatedTokenCount={overview?.estimatedTokenCount} locale={locale} />
+
         {/* ── Range + Filters ── */}
         <div className="mt-2 mb-6 flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-center">
           <div className="flex min-w-0 items-center gap-2 overflow-x-auto scrollbar-hide">
@@ -538,6 +541,9 @@ export function App() {
         <div className="card flex min-h-[320px] flex-col items-center justify-center p-8">
           <div className="mb-1.5 text-[13px] text-slate-400 dark:text-slate-500">{t.failedToLoad}</div>
           <div className="text-[13px] text-red-500/80">{error}</div>
+          <button type="button" onClick={refresh} className="mt-4 rounded-md bg-slate-100 px-3 py-2 text-[13px] text-slate-600 dark:bg-white/10 dark:text-slate-300">
+            {t.refresh}
+          </button>
         </div>
       ) : (
         <div className="grid gap-4">
@@ -647,6 +653,21 @@ export function App() {
             )}
           </div>
 
+          {/* ── Tool Trend ── */}
+          <div className="card fade-up p-6" style={{ animationDelay: '192ms' }}>
+            <SectionHeader title={t.toolTrend} stat={unavailable ? t.unavailable : formatUsd(overview?.totalCostUsd ?? 0)} />
+            {unavailable ? (
+              <EmptyState label={t.costUnavailable} />
+            ) : (
+              <ChartBoundary name="Tool Trend">
+                <ToolTrendChart
+                  data={chartSeries.dailyTrend}
+                  toolTrend={chartSeries.toolTrend}
+                />
+              </ChartBoundary>
+            )}
+          </div>
+
           {/* ── Cost Composition ── */}
           <div className="card fade-up p-6" style={{ animationDelay: '205ms' }}>
             <SectionHeader title={t.costComposition} stat={unavailable ? t.unavailable : formatUsd(overview?.totalCostUsd ?? 0)} />
@@ -729,6 +750,19 @@ export function App() {
                       colors={getChartColors(isDark)}
                       centerLabel={formatUsd(overview?.totalCostUsd ?? 0)}
                       getIconSrc={(item) => iconSrc(providerIcon(item.value))}
+                    />
+                    <div className="my-5 border-t border-slate-100 dark:border-white/[0.08]" />
+                    <DonutSection
+                      title={t.toolShare}
+                      data={(overview?.filters.options.products ?? []).map((p) => ({
+                        value: p.value,
+                        label: formatProductLabel(p.value),
+                        estimatedCostUsd: p.estimatedCostUsd,
+                        eventCount: p.eventCount,
+                      }))}
+                      colors={getChartColors(isDark)}
+                      centerLabel={formatUsd(overview?.totalCostUsd ?? 0)}
+                      getIconSrc={(item) => iconSrc(productIcon(item.value))}
                     />
                     <div className="my-5 border-t border-slate-100 dark:border-white/[0.08]" />
                     <DonutSection

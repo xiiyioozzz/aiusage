@@ -10,7 +10,7 @@ import {
   resolveProjectFields,
 } from './utils.js';
 import { normalizeProxyModel } from './kiro-proxy.js';
-import { resolveHermesDbPath } from './kiro-recovered.js';
+import { isKiroGoBilling, resolveHermesDbPath } from './kiro-recovered.js';
 
 /**
  * Hermes Agent (`~/.hermes/state.db`).
@@ -113,16 +113,8 @@ interface HermesRow {
   reasoning: number;
 }
 
-function isKiroGoBilling(provider?: string | null, baseUrl?: string | null): boolean {
-  const billing = `${provider ?? ''} ${baseUrl ?? ''}`.toLowerCase();
-  return billing.includes('kiro-go') || billing.includes('kiro.') || /:8080(?:\/|$)/.test(billing);
-}
-
 async function loadStandaloneHermesUsage(dbPath: string): Promise<HermesRow[]> {
-  let DatabaseSync: new (path: string, options?: { readOnly?: boolean }) => {
-    prepare(sql: string): { all: (...params: unknown[]) => unknown[] };
-    close(): void;
-  };
+  let DatabaseSync: typeof import('node:sqlite').DatabaseSync;
   try {
     ({ DatabaseSync } = await import('node:sqlite'));
   } catch {

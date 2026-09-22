@@ -2,6 +2,7 @@ import { PUBLIC_READ_CACHE_HEADERS, jsonError, jsonOk } from '../utils/response.
 import { toPublicProjectName } from '../utils/privacy.js';
 import type { Env } from '../types.js';
 import { shiftCalendarYear, type CostCompositionItem, type OverviewComparisonPayload } from '@aiusage/shared';
+import { backfillUnpricedModels } from './backfill-pricing.js';
 
 export const TOTAL_TOKENS_SQL = `
   COALESCE(b.input_tokens, 0) +
@@ -14,9 +15,19 @@ export const TOTAL_TOKENS_SQL = `
 const PROJECT_DISPLAY_SQL = `COALESCE(b.project_alias, b.project_display)`;
 const ACTIVITY_PROJECT_DISPLAY_SQL = `COALESCE(a.project_alias, a.project_display)`;
 
-/** Kiro / xkiro 只是通道，按模型名摊回真正的厂商。 */
-export function providerDisplaySql(alias: 'a' | 'b' = 'b'): string {
+/** Grok Bot bills through Cursor but is a separate product in the UI. */
+export function toolDisplaySql(alias: 'a' | 'b' = 'b'): string {
   const model = `lower(COALESCE(${alias}.model, ''))`;
+  return `CASE WHEN ${model} LIKE 'grok-bot%' THEN 'grok-bot' ELSE ${alias}.product END`;
+}
+
+/**
+ * Cost-trend vendor is the model lineage, not the host app.
+ * Cursor / Kiro / Hermes are gateways: cursor-grok-* and grok-bot-* count as xAI,
+ * Cursor Claude as Anthropic, Composer / Auto stay Cursor.
+ */
+export function providerDisplaySql(alias: 'a' | 'b' = 'b'): string {
+  const model = `replace(lower(COALESCE(${alias}.model, '')), 'cursor-', '')`;
   const inferred = `CASE
     WHEN ${model} LIKE 'claude%' OR ${model} LIKE 'opus-%' OR ${model} LIKE 'opus.%' OR ${model} = 'opus'
       OR ${model} LIKE 'sonnet%' OR ${model} LIKE 'haiku%' OR ${model} LIKE 'fable%' OR ${model} LIKE 'mythos%'
@@ -30,9 +41,9 @@ export function providerDisplaySql(alias: 'a' | 'b' = 'b'): string {
     WHEN ${model} LIKE 'glm%' OR ${model} LIKE 'codegeex%' THEN 'zhipu'
     WHEN ${model} LIKE 'kimi%' OR ${model} LIKE 'moonshot%' THEN 'moonshot'
     WHEN ${model} LIKE 'grok%' THEN 'xai'
-    ELSE ${alias}.provider
+    ELSE NULL
   END`;
-  return `CASE WHEN ${alias}.provider IN ('kiro', 'xkiro') THEN (${inferred}) ELSE ${alias}.provider END`;
+  return `COALESCE((${inferred}), ${alias}.provider)`;
 }
 
 export type FilterKey = 'deviceId' | 'provider' | 'product' | 'channel' | 'model' | 'project';
@@ -66,6 +77,11 @@ export async function handleOverview(url: URL, env: Env): Promise<Response> {
   const timeZone = siteTimeZone(env);
   const filters = parseFilters(url, new Date(), timeZone);
   if (!filters) return jsonError(400, 'INVALID_PAYLOAD', 'Invalid range parameter', true);
+  try {
+    await backfillUnpricedModels(env);
+  } catch (err) {
+    console.warn('live pricing backfill failed', err);
+  }
 
   const where = buildWhere(filters);
   const previousFilters = buildPreviousFilters(filters);
@@ -79,6 +95,7 @@ export async function handleOverview(url: URL, env: Env): Promise<Response> {
     summary,
     trendRows,
     providerTrendRows,
+    toolTrendRows,
     tokenRows,
     costPartRows,
     modelRows,
@@ -88,6 +105,7 @@ export async function handleOverview(url: URL, env: Env): Promise<Response> {
     hourlyTrendRows,
     hourlyHeatmapRows,
     hourlyProviderRows,
+    hourlyToolRows,
     hourlyTokenRows,
     hourlyCostRows,
     devices,
@@ -104,6 +122,8 @@ export async function handleOverview(url: URL, env: Env): Promise<Response> {
         COUNT(DISTINCT b.usage_date) AS active_days,
         COALESCE(SUM(b.event_count), 0) AS total_events,
         COALESCE(SUM(b.session_count), 0) AS total_sessions,
+        COALESCE(SUM(CASE WHEN json_extract(b.extra_metrics_json, '$.token_quality') = 'estimated'
+          THEN ${TOTAL_TOKENS_SQL} ELSE 0 END), 0) AS estimated_token_count,
         COALESCE(SUM(CASE WHEN b.estimated_cost_usd > 0 THEN b.event_count ELSE 0 END), 0) AS cost_bearing_events,
         COALESCE(SUM(b.estimated_cost_usd), 0) AS total_cost_usd
       FROM daily_usage_breakdown b
@@ -112,6 +132,7 @@ export async function handleOverview(url: URL, env: Env): Promise<Response> {
       active_days: number;
       total_events: number;
       total_sessions: number;
+      estimated_token_count: number;
       cost_bearing_events: number;
       total_cost_usd: number;
     }>(),
@@ -141,6 +162,20 @@ export async function handleOverview(url: URL, env: Env): Promise<Response> {
     `).bind(...where.params).all<{
       usage_date: string;
       provider: string;
+      estimated_cost_usd: number;
+    }>(),
+    env.DB.prepare(`
+      SELECT
+        b.usage_date,
+        ${toolDisplaySql('b')} AS tool,
+        COALESCE(SUM(b.estimated_cost_usd), 0) AS estimated_cost_usd
+      FROM daily_usage_breakdown b
+      ${where.whereClause}
+      GROUP BY b.usage_date, ${toolDisplaySql('b')}
+      ORDER BY b.usage_date, tool
+    `).bind(...where.params).all<{
+      usage_date: string;
+      tool: string;
       estimated_cost_usd: number;
     }>(),
     env.DB.prepare(`
@@ -290,6 +325,22 @@ export async function handleOverview(url: URL, env: Env): Promise<Response> {
       provider: string;
       estimated_cost_usd: number;
     }>() : Promise.resolve({ results: [] }),
+    wantHourly ? env.DB.prepare(`
+      SELECT
+        b.usage_date,
+        b.usage_hour,
+        ${toolDisplaySql('b')} AS tool,
+        COALESCE(SUM(b.estimated_cost_usd), 0) AS estimated_cost_usd
+      FROM hourly_usage_breakdown b
+      ${where.whereClause}
+      GROUP BY b.usage_date, b.usage_hour, ${toolDisplaySql('b')}
+      ORDER BY b.usage_date, b.usage_hour, tool
+    `).bind(...where.params).all<{
+      usage_date: string;
+      usage_hour: number;
+      tool: string;
+      estimated_cost_usd: number;
+    }>() : Promise.resolve({ results: [] }),
     wantHourlyCost ? env.DB.prepare(`
       SELECT
         b.usage_date,
@@ -353,6 +404,7 @@ export async function handleOverview(url: URL, env: Env): Promise<Response> {
     activeDays,
     totalEvents,
     totalSessions,
+    estimatedTokenCount: Number(summary?.estimated_token_count ?? 0),
     costBearingEvents,
     totalCostUsd,
     averageDailyCostUsd: activeDays > 0 ? roundUsd(totalCostUsd / activeDays) : 0,
@@ -366,6 +418,11 @@ export async function handleOverview(url: URL, env: Env): Promise<Response> {
       .map(row => ({
       usageDate: row.usage_date,
       provider: row.provider,
+      estimatedCostUsd: roundUsd(row.estimated_cost_usd ?? 0),
+    })),
+    toolDailyTrend: (toolTrendRows.results ?? []).map(row => ({
+      usageDate: row.usage_date,
+      tool: row.tool,
       estimatedCostUsd: roundUsd(row.estimated_cost_usd ?? 0),
     })),
     tokenComposition: (tokenRows.results ?? []).map(row => ({
@@ -424,6 +481,12 @@ export async function handleOverview(url: URL, env: Env): Promise<Response> {
         provider: row.provider,
         estimatedCostUsd: roundUsd(row.estimated_cost_usd ?? 0),
       })),
+    hourlyToolTrend: (hourlyToolRows.results ?? []).map(row => ({
+      usageDate: row.usage_date,
+      hour: Number(row.usage_hour ?? 0),
+      tool: row.tool,
+      estimatedCostUsd: roundUsd(row.estimated_cost_usd ?? 0),
+    })),
     hourlyTokenComposition: (hourlyTokenRows.results ?? []).map(row => ({
       usageDate: row.usage_date,
       hour: Number(row.usage_hour ?? 0),
@@ -556,7 +619,9 @@ async function loadFacetOptions(column: string, filters: DashboardFilters, env: 
     ? PROJECT_DISPLAY_SQL
     : column === 'provider'
       ? providerDisplaySql('b')
-      : `b.${column}`;
+      : column === 'product'
+        ? toolDisplaySql('b')
+        : `b.${column}`;
   const rows = await env.DB.prepare(`
     SELECT
       ${columnExpr} AS value,
@@ -815,8 +880,9 @@ function buildActivityWhere(filters: DashboardFilters): WhereParts {
     params.push(filters.maxDate);
   }
   addValueFilter(clauses, params, 'a.device_id', filters.deviceId);
-  addValueFilter(clauses, params, providerDisplaySql('a'), filters.provider);
-  addProductFilter(clauses, params, 'a', filters.product);
+  // Activity records do not contain a model to infer a gateway's vendor from.
+  addValueFilter(clauses, params, 'a.provider', filters.provider);
+  addProductFilter(clauses, params, 'a', filters.product, { hasModel: false });
   if (filters.channel.length > 0 && !filters.channel.includes('cli')) {
     clauses.push('1 = 0');
   }
@@ -1053,8 +1119,10 @@ function addProductFilter(
   params: (string | number)[],
   tableAlias: 'a' | 'b',
   products: string[],
+  options: { hasModel?: boolean } = {},
 ): void {
   if (products.length === 0) return;
+  const hasModel = options.hasModel ?? true;
   const expanded = new Set<string>();
   for (const product of products) {
     if (product === 'trae') {
@@ -1066,13 +1134,28 @@ function addProductFilter(
     }
   }
   const values = [...expanded];
-  if (values.length === 1) {
-    clauses.push(`${tableAlias}.product = ?`);
-    params.push(values[0]);
-    return;
+  const grokBot = values.includes('grok-bot');
+  const cursor = values.includes('cursor');
+  const others = values.filter(value => value !== 'grok-bot' && value !== 'cursor');
+  const parts: string[] = [];
+  const partParams: (string | number)[] = [];
+  const model = `lower(COALESCE(${tableAlias}.model, ''))`;
+  if (grokBot) parts.push(hasModel ? `${model} LIKE 'grok-bot%'` : '1 = 0');
+  if (cursor) {
+    parts.push(hasModel
+      ? `(${tableAlias}.product = ? AND ${model} NOT LIKE 'grok-bot%')`
+      : `${tableAlias}.product = ?`);
+    partParams.push('cursor');
   }
-  clauses.push(`${tableAlias}.product IN (${values.map(() => '?').join(', ')})`);
-  params.push(...values);
+  if (others.length === 1) {
+    parts.push(`${tableAlias}.product = ?`);
+    partParams.push(others[0]);
+  } else if (others.length > 1) {
+    parts.push(`${tableAlias}.product IN (${others.map(() => '?').join(', ')})`);
+    partParams.push(...others);
+  }
+  clauses.push(parts.length === 1 ? parts[0] : `(${parts.join(' OR ')})`);
+  params.push(...partParams);
 }
 
 function isGatewayProvider(value: string): boolean {
@@ -1091,9 +1174,12 @@ function productLabel(value: string, combined: boolean): string {
   if (value === 'trae-intl') return 'Trae International';
   if (value === 'trae') return combined ? 'Trae (All)' : 'Trae (Legacy)';
   if (value === 'codex') return 'ChatGPT';
+  if (value === 'claude-code') return 'Claude Code';
   if (value === 'hermes') return 'Hermes';
   if (value === 'kiro') return 'Kiro';
   if (value === 'cursor') return 'Cursor';
+  if (value === 'grok-bot') return 'Grok Bot';
+  if (value === 'grok') return 'Grok Build';
   return value;
 }
 

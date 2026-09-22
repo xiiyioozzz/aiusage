@@ -63,6 +63,11 @@ describe('calculateCost — 关键模型', () => {
     ['openai', 'codex', 'computer-use-preview', 7.5], // 1.5 + 6，修正后
     ['google', 'gemini-cli', 'gemini-2.5-flash', 2.8], // 0.30 + 2.50，修正后
     ['moonshot', 'kimi-code', 'k3', 120 / 7.2], // alias → kimi-k3，¥20 + ¥100
+    ['xai', 'grok', 'grok-4.7', 16], // 长上下文：4 + 12
+    ['xai', 'grok', 'grok-4.7-build', 16],
+    ['xai', 'grok', 'grok-4.7-fast', 24], // Fast 长上下文：6 + 18
+    ['xai', 'grok', 'grok-4.6', 16], // 长上下文：4 + 12
+    ['xai', 'grok', 'grok-4.6-build', 16],
   ])('%s/%s/%s 应等于 $%s', (provider, product, model, expected) => {
     const r = calculateCost(provider, product, model, tokens);
     expect(r.costStatus).toBe('exact');
@@ -114,6 +119,26 @@ describe('calculateCost — 关键模型', () => {
     expect(r.costStatus).toBe('estimated');
     expect(r.resolvedModel).toBe('grok-4.6');
     expect(r.estimatedCostUsd).toBeCloseTo(16, 4);
+  });
+
+  it('Cursor Grok 4.7 Fast 按官方 Fast 阶梯估算', () => {
+    const long = calculateCost('cursor', 'cursor', 'cursor-grok-4.7-xhigh-fast', tokens);
+    expect(long.costStatus).toBe('estimated');
+    expect(long.resolvedModel).toBe('grok-4.7-fast');
+    expect(long.estimatedCostUsd).toBeCloseTo(24, 4);
+
+    const standard = calculateCost('cursor', 'cursor', 'cursor-grok-4.7-xhigh', tokens);
+    expect(standard.resolvedModel).toBe('grok-4.7');
+    expect(standard.estimatedCostUsd).toBeCloseTo(16, 4);
+
+    const short = calculateCost('xai', 'grok', 'grok-4.7', {
+      inputTokens: 100_000,
+      cachedInputTokens: 0,
+      cacheWriteTokens: 0,
+      outputTokens: 100_000,
+    });
+    expect(short.costStatus).toBe('exact');
+    expect(short.estimatedCostUsd).toBeCloseTo(0.8, 4);
   });
 
   it('Cursor Claude 订阅用量按 Claude Code 公开单价估算', () => {

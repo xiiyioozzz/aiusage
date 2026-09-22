@@ -3,7 +3,7 @@
 `@aiusage/cli` is the AIUsage command-line tool for:
 
 - discovering and managing projects across AI tools
-- scanning local Claude Code, Codex, Cursor, Copilot CLI, Copilot for VS Code, Gemini CLI, Antigravity, Amp, Kimi Code, Qwen Code, Droid, OpenCode, Pi, Trae, and Kiro (IDE + Kiro-Go / kiro.rs) usage
+- scanning local Claude Code, Codex, Cursor, Copilot CLI, Copilot for VS Code, Gemini CLI, Antigravity, Amp, Kimi Code, Qwen Code, Droid, OpenCode, Pi, Trae, Kiro (IDE + Kiro-Go / kiro.rs), and Grok Build usage
 - importing historical usage from Anthropic Admin API
 - printing local usage summaries for the last 7, 30, 90, or 180 days, or all history
 - scheduling automatic sync to an AIUsage Worker
@@ -33,7 +33,8 @@ differ, rather than treating every local record as billable token usage.
 | Pi / Oh My Pi | `~/.pi/agent/sessions/` and `~/.omp/agent/sessions/` JSONL, including provider, cache-write, and session metadata. |
 | Trae CN | `aiusage trae sync --edition cn` reads local history through Trae's official `ai-agent` RPC and writes a privacy-minimized cache under `~/.aiusage/trae-cache/sessions/`. The encrypted SQLCipher database is never opened directly. |
 | Trae / Trae Solo (international) | `aiusage trae sync --edition intl` reads the older plain-JSON or decrypts the newer desktop credential format, then queries Trae's official account usage API once; IDE and Solo share the same account-level data. Numeric session data is cached under `~/.aiusage/trae-cache/intl/sessions/`. Existing tokscale caches under `~/.config/tokscale/trae-cache/sessions/` remain compatible and are deduplicated by session. |
-| Kiro | IDE transcripts under `~/.kiro/sessions/` estimate tokens from context usage / character counts. Kiro-Go `request_logs.json` and kiro.rs `usage_log.YYYY-MM-DD.jsonl` are ingested as `channel=api` with upstream token counters; cost uses the same model's public API list price. Default dirs include `~/.kiro-go/data` and `~/.kiro.rs`. Extra roots: `scanner.kiroProxyDataDirs`, `KIRO_GO_DATA_DIR`, `KIRO_RS_DATA_DIR`. |
+| Kiro | IDE transcripts under `~/.kiro/sessions/` estimate tokens from `contextUsage% ×` the session model's official window (1M / 200k / …) and assistant character counts. Official credit lines have no model or API tokens, so they are not converted at the $0.04 overage rate. Kiro-Go `request_logs.json` and kiro.rs `usage_log.YYYY-MM-DD.jsonl` are ingested as `channel=api` with upstream token counters; cost uses the same model's public API list price. Default dirs include `~/.kiro-go/data` and `~/.kiro.rs`. Extra roots: `scanner.kiroProxyDataDirs`, `KIRO_GO_DATA_DIR`, `KIRO_RS_DATA_DIR`. |
+| Grok Build | `$GROK_HOME/sessions/` (default `~/.grok/sessions/`) `updates.jsonl` turn usage, including cached/reasoning splits and `grok-4.6-build`; cost uses xAI list prices. |
 
 Only token counters and session metadata are aggregated or uploaded. Conversation
 content and local credentials are never uploaded.

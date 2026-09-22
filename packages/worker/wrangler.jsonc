@@ -38,6 +38,7 @@
   // - DEVICE_TOKEN_SECRET
   // - PROJECT_NAME_SALT
   "vars": {
+    "PUBLIC_HOST": "aiusage.xdullboy.com",
     "MAX_DEVICES": "10",
     "PUBLIC_PROJECT_VISIBILITY": "plain",
     "DEFAULT_TIMEZONE": "Asia/Shanghai"

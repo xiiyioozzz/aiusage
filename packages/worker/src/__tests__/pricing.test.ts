@@ -24,6 +24,33 @@ describe('getPricingCatalog', () => {
 // ─── calculateCost: 基本计费 ───
 
 describe('calculateCost: 基本计费', () => {
+  it('估算 token 不会因客户端供应商费用标为 exact', () => {
+    const result = calculateIngestBreakdownCost({
+      provider: 'openai', product: 'opencode', channel: 'cli', model: 'gpt-5.5',
+      project: 'test', eventCount: 1, inputTokens: 0, cachedInputTokens: 0,
+      cacheWriteTokens: 0, outputTokens: 100, reasoningOutputTokens: 900,
+      tokenQuality: 'estimated', costUSD: 0.25,
+    });
+    expect(result.estimatedCostUsd).toBe(0.25);
+    expect(result.costStatus).toBe('estimated');
+    expect(calculateIngestBreakdownCost({
+      provider: 'unknown', product: 'unknown', channel: 'cli', model: 'unknown',
+      project: 'test', eventCount: 1, inputTokens: 1, cachedInputTokens: 0,
+      cacheWriteTokens: 0, outputTokens: 0, reasoningOutputTokens: 0,
+      tokenQuality: 'estimated',
+    }).costStatus).toBe('unavailable');
+  });
+
+  it('旧版本成本回退包含已分离的 reasoning 输出', () => {
+    const result = calculateIngestBreakdownCost({
+      provider: 'openai', product: 'codex', channel: 'cli', model: 'gpt-5.5',
+      project: 'test', eventCount: 1, inputTokens: 0, cachedInputTokens: 0,
+      cacheWriteTokens: 0, outputTokens: 100, reasoningOutputTokens: 900,
+      costUSD: 0.001, pricingVersion: 'stale-catalog',
+    });
+    expect(result.estimatedCostUsd).toBe(0.03);
+  });
+
   it('优先采用 scanner 按请求累计的精确成本', () => {
     const result = calculateIngestBreakdownCost({
       provider: 'openai',
@@ -85,6 +112,27 @@ describe('calculateCost: 基本计费', () => {
 
     expect(result.estimatedCostUsd).toBe(0.25);
     expect(result.costStatus).toBe('exact');
+  });
+
+  it('Kiro IDE 过期积分费用按公开 API 牌价重算', () => {
+    const result = calculateIngestBreakdownCost({
+      provider: 'anthropic',
+      product: 'kiro',
+      channel: 'ide',
+      model: 'claude-opus-4.8',
+      project: '/tmp/project',
+      eventCount: 1,
+      inputTokens: 1_000_000,
+      cachedInputTokens: 0,
+      cacheWriteTokens: 0,
+      outputTokens: 0,
+      reasoningOutputTokens: 0,
+      tokenQuality: 'estimated',
+      costUSD: 0.4,
+      pricingVersion: 'stale-catalog',
+    });
+    expect(result.estimatedCostUsd).toBe(5);
+    expect(result.costStatus).toBe('estimated');
   });
 
   it('始终采用 OpenCode 消息中持久化的供应商费用', () => {

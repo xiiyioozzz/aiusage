@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os';
 import { DatabaseSync } from 'node:sqlite';
 import { dateKey } from '../utils.js';
 import { scanHermesDates } from '../hermes.js';
+import { scanKiroRecoveredDates } from '../kiro-recovered.js';
 
 let rootDir: string;
 
@@ -18,6 +19,33 @@ afterEach(async () => {
 });
 
 describe('scanHermesDates', () => {
+  it.each([
+    ['kiro', 'https://gateway.example/v1'],
+    ['KIRO custom', 'https://gateway.example/v1'],
+    ['custom', 'http://127.0.0.1:8080/v1'],
+    ['custom', 'https://kiro.example/v1'],
+  ])('assigns billing %s at %s to Kiro exactly once', async (provider, baseUrl) => {
+    const when = new Date('2026-08-06T12:00:00.000Z');
+    const usageDate = dateKey(when);
+    const dbPath = join(rootDir, 'state.db');
+    const db = new DatabaseSync(dbPath);
+    db.exec(`CREATE TABLE sessions (
+      id TEXT, started_at REAL, model TEXT, api_call_count INTEGER,
+      input_tokens INTEGER, output_tokens INTEGER, cache_read_tokens INTEGER,
+      cache_write_tokens INTEGER, reasoning_tokens INTEGER,
+      billing_provider TEXT, billing_base_url TEXT, cwd TEXT, git_repo_root TEXT
+    )`);
+    db.prepare('INSERT INTO sessions VALUES (?, ?, ?, 1, 1000, 100, 0, 0, 0, ?, ?, ?, ?)')
+      .run('sess-kiro', when.getTime() / 1000, 'gpt-5.6-sol', provider, baseUrl, '/tmp/project', '/tmp/project');
+    db.close();
+
+    const options = { hermesDbPath: dbPath, home: rootDir, env: {} };
+    expect((await scanHermesDates([usageDate], options)).get(usageDate)).toEqual([]);
+    expect((await scanKiroRecoveredDates([usageDate], options)).get(usageDate)).toEqual([
+      expect.objectContaining({ product: 'kiro', eventCount: 1, inputTokens: 1000, outputTokens: 100 }),
+    ]);
+  });
+
   it('counts standalone Hermes sessions and skips Kiro-Go billing', async () => {
     const when = new Date('2026-08-06T12:00:00.000Z');
     const usageDate = dateKey(when);

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { buildDailyCostComposition, buildDateWindow, buildPreviousFilters, buildWhere, dateStringInTimeZone, hourInTimeZone, parseFilters, providerDisplaySql, resolveTotalDays } from './overview';
+import { buildDailyCostComposition, buildDateWindow, buildPreviousFilters, buildWhere, dateStringInTimeZone, hourInTimeZone, parseFilters, providerDisplaySql, resolveTotalDays, toolDisplaySql } from './overview';
 
 describe('overview filters', () => {
   it('builds inclusive date windows that include today without adding an extra day', () => {
@@ -109,15 +109,36 @@ describe('overview filters', () => {
     expect(where.params).toEqual([expect.any(String), expect.any(String), 'mac-a', 'mac-b', 'AIUsage']);
   });
 
-  it('maps kiro/xkiro channel rows back to the real model vendor', () => {
-    expect(providerDisplaySql('b')).toContain("'xkiro'");
+  it('maps hosted models back to the real vendor, including Cursor Grok', () => {
+    expect(providerDisplaySql('b')).toContain("replace(lower(COALESCE(b.model, '')), 'cursor-', '')");
     expect(providerDisplaySql('b')).toContain('anthropic');
+    expect(providerDisplaySql('b')).toContain("'xai'");
+    expect(providerDisplaySql('b')).toContain('COALESCE');
     expect(providerDisplaySql('b')).not.toContain("product = 'kiro'");
 
     const filters = parseFilters(new URL('https://example.com/api/v1/public/overview?range=7d&provider=anthropic'))!;
     const where = buildWhere(filters);
     expect(where.whereClause).toContain(providerDisplaySql('b'));
     expect(where.params).toContain('anthropic');
+  });
+
+  it('splits grok-bot from cursor in the tool dimension', () => {
+    expect(toolDisplaySql('b')).toContain("LIKE 'grok-bot%'");
+    expect(toolDisplaySql('b')).toContain('b.product');
+
+    const grokBot = buildWhere(parseFilters(new URL('https://example.com/api/v1/public/overview?range=7d&product=grok-bot'))!);
+    expect(grokBot.whereClause).toContain("LIKE 'grok-bot%'");
+    expect(grokBot.whereClause).not.toContain('NOT LIKE');
+
+    const cursor = buildWhere(parseFilters(new URL('https://example.com/api/v1/public/overview?range=7d&product=cursor'))!);
+    expect(cursor.whereClause).toContain("NOT LIKE 'grok-bot%'");
+    expect(cursor.params).toContain('cursor');
+
+    const mixed = buildWhere(parseFilters(new URL('https://example.com/api/v1/public/overview?range=7d&product=cursor&product=grok-bot&product=codex'))!);
+    expect(mixed.whereClause).toContain('OR');
+    expect(mixed.whereClause).toContain("LIKE 'grok-bot%'");
+    expect(mixed.whereClause).toContain("NOT LIKE 'grok-bot%'");
+    expect(mixed.params).toEqual(expect.arrayContaining(['cursor', 'codex']));
   });
 });
 

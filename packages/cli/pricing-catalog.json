@@ -1,5 +1,5 @@
 {
-  "version": "2026-09-15-cursor-hermes-list-v1",
+  "version": "2026-09-22-grok-4.7",
   "fx": {
     "CNY": 7.2
   },
@@ -22,7 +22,10 @@
     "gpt-5.6": "gpt-5.6-sol",
     "codex-auto-review": "gpt-5.4",
     "k3": "kimi-k3",
-    "kimi-code/k3": "kimi-k3"
+    "kimi-code/k3": "kimi-k3",
+    "grok-4.6-build": "grok-4.6",
+    "grok-4.7-build": "grok-4.7",
+    "grok-4-7": "grok-4.7"
   },
   "providers": {
     "anthropic": {
@@ -1376,6 +1379,42 @@
     "xai": {
       "grok": {
         "models": {
+          "grok-4.7": {
+            "currency": "USD",
+            "effective_from": "2026-09-21",
+            "notes": "tiered by prompt length, 200K threshold",
+            "tiers": [
+              {
+                "threshold": 200000,
+                "input_per_million": 2,
+                "cached_input_per_million": 0.5,
+                "output_per_million": 6
+              },
+              {
+                "input_per_million": 4,
+                "cached_input_per_million": 1,
+                "output_per_million": 12
+              }
+            ]
+          },
+          "grok-4.7-fast": {
+            "currency": "USD",
+            "effective_from": "2026-09-21",
+            "notes": "Cursor and Grok Build only; tiered by prompt length, 200K threshold",
+            "tiers": [
+              {
+                "threshold": 200000,
+                "input_per_million": 4,
+                "cached_input_per_million": 1,
+                "output_per_million": 12
+              },
+              {
+                "input_per_million": 6,
+                "cached_input_per_million": 1.5,
+                "output_per_million": 18
+              }
+            ]
+          },
           "grok-4.6": {
             "currency": "USD",
             "effective_from": "2026-08-12",

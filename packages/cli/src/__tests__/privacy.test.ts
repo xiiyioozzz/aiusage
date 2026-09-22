@@ -78,4 +78,13 @@ describe('applyPrivacy', () => {
     const [r] = applyPrivacy([makeBreakdown('demo-project')], 'plain');
     expect(r.project).toBe('demo-project');
   });
+
+  it('masked 保留显式的非路径展示名（Grok Bot 机器人名）', () => {
+    const [r] = applyPrivacy([
+      makeBreakdown('grok-bot/1c8a0f29-af41-404a-9e06-9fa8004b8c1b', 'HeavenPrem 货单机器人'),
+    ], 'masked');
+    expect(r.project).toMatch(/^1c8a0f29-af41-404a-9e06-9fa8004b8c1b-[0-9a-f]{8}$/);
+    expect(r.projectDisplay).toBe('HeavenPrem 货单机器人');
+    expect(r.projectAlias).toBeUndefined();
+  });
 });

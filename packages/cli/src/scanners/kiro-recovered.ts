@@ -1,6 +1,5 @@
-import { readdir, readFile, stat } from 'node:fs/promises';
 import { homedir } from 'node:os';
-import { basename, isAbsolute, join, resolve } from 'node:path';
+import { isAbsolute, join, resolve } from 'node:path';
 import type { IngestBreakdown } from '@aiusage/shared';
 import {
   accumulate,
@@ -11,13 +10,13 @@ import {
   initDateMap,
   resolveProjectFields,
 } from './utils.js';
-import { normalizeProxyModel, resolveKiroProxyDataDirs } from './kiro-proxy.js';
+import { normalizeProxyModel } from './kiro-proxy.js';
 
 /**
- * Recover Kiro-Go usage that never landed in request_logs.json:
- *   1. Hermes sessions billed to local Kiro-Go (:8080 / kiro-go-local)
- *   2. The leftover lifetime counter in Kiro-Go config.json, spread evenly
- *      across every day that already has kiro-go Hermes usage
+ * Recover Kiro-Go usage from Hermes session/model aggregates. Their only time
+ * anchor is the session start, so this is an estimate of daily attribution.
+ * Lifetime counters have no date/model split and must never be distributed
+ * across historical dates. Request logs take precedence in scanKiroDates.
  */
 
 const HERMES_DB = 'state.db';
@@ -40,17 +39,6 @@ interface HermesUsageRow {
   cached: number;
   cacheWrite: number;
   reasoning: number;
-}
-
-interface LifetimeSnapshot {
-  totalTokens: number;
-  totalRequests: number;
-}
-
-interface ModelShare {
-  model: string;
-  tokens: number;
-  events: number;
 }
 
 export function resolveHermesDbPath(
@@ -89,11 +77,6 @@ export async function scanKiroRecoveredDates(
   );
   addHermesRows(grouped, dates, hermesRows, options.projectAliases);
 
-  const lifetime = await loadLifetimeSnapshot(options.extraDirs, options.home, options.env);
-  if (lifetime) {
-    addLifetimeRemainder(grouped, dates, lifetime, hermesRows, options.projectAliases);
-  }
-
   return finalize(grouped);
 }
 
@@ -112,6 +95,7 @@ function addHermesRows(
     const model = normalizeProxyModel(row.model);
     const provider = inferProviderFromModel(model, 'kiro');
     accumulate(day, `api|hermes|${model}|${projectFields.project}`, {
+      tokenQuality: 'estimated',
       provider,
       product: 'kiro',
       channel: 'api',
@@ -134,73 +118,8 @@ function addHermesRows(
   }
 }
 
-function addLifetimeRemainder(
-  grouped: ReturnType<typeof initDateMap>,
-  dates: Set<string>,
-  lifetime: LifetimeSnapshot,
-  hermesRows: HermesUsageRow[],
-  projectAliases?: Record<string, string>,
-): void {
-  const countedTokens = hermesRows.reduce((sum, row) => sum + rowTokens(row), 0);
-  const countedEvents = hermesRows.reduce((sum, row) => sum + row.events, 0);
-  const leftoverTokens = Math.max(0, lifetime.totalTokens - countedTokens);
-  const leftoverEvents = Math.max(0, lifetime.totalRequests - countedEvents);
-  if (leftoverTokens <= 0) return;
-
-  const byDay = groupHermesByDay(hermesRows);
-  const kiroGoDays = [...byDay.keys()].sort();
-  if (kiroGoDays.length === 0) return;
-
-  const tokenShares = splitEvenly(leftoverTokens, kiroGoDays.length);
-  const eventShares = splitEvenly(leftoverEvents, kiroGoDays.length);
-  const projectFields = resolveProjectFields(KIRO_GO_PROJECT, projectAliases);
-
-  for (const [index, usageDate] of kiroGoDays.entries()) {
-    if (!dates.has(usageDate)) continue;
-    const day = grouped.get(usageDate);
-    if (!day) continue;
-    const shares = sharesFromHermes(byDay.get(usageDate) ?? []);
-    const parts = splitByShare(tokenShares[index] ?? 0, eventShares[index] ?? 0, shares);
-    for (const part of parts) {
-      if (part.tokens <= 0 && part.events <= 0) continue;
-      const model = normalizeProxyModel(part.model);
-      const key = `api|hermes|${model}|${projectFields.project}`;
-      const existing = day.get(key);
-      if (existing) {
-        existing.inputTokens += part.tokens;
-        existing.eventCount += part.events;
-        continue;
-      }
-      const provider = inferProviderFromModel(model, 'kiro');
-      accumulate(day, key, {
-        provider,
-        product: 'kiro',
-        channel: 'api',
-        model,
-        project: projectFields.project,
-        projectDisplay: projectFields.projectDisplay,
-        projectAlias: projectFields.projectAlias,
-        inputTokens: 0,
-        cachedInputTokens: 0,
-        cacheWriteTokens: 0,
-        outputTokens: 0,
-        reasoningOutputTokens: 0,
-      }, {
-        input: part.tokens,
-        cached: 0,
-        cacheWrite: 0,
-        output: 0,
-        reasoning: 0,
-      }, Math.max(1, part.events));
-    }
-  }
-}
-
 async function loadHermesUsage(dbPath: string): Promise<HermesUsageRow[]> {
-  let DatabaseSync: new (path: string, options?: { readOnly?: boolean }) => {
-    prepare(sql: string): { all: (...params: unknown[]) => unknown[] };
-    close(): void;
-  };
+  let DatabaseSync: typeof import('node:sqlite').DatabaseSync;
   try {
     ({ DatabaseSync } = await import('node:sqlite'));
   } catch {
@@ -226,23 +145,24 @@ async function loadHermesUsage(dbPath: string): Promise<HermesUsageRow[]> {
         SELECT s.started_at AS started_at, u.model AS model, u.api_call_count AS events,
                u.input_tokens AS input, u.output_tokens AS output,
                u.cache_read_tokens AS cached, u.cache_write_tokens AS cache_write,
-               u.reasoning_tokens AS reasoning
+               u.reasoning_tokens AS reasoning,
+               u.billing_provider, u.billing_base_url
         FROM session_model_usage u
         JOIN sessions s ON s.id = u.session_id
-        WHERE ${kiroGoSql('u')}
       `).all() as HermesSqlRow[];
-      return rows.map(parseHermesSqlRow).filter((row): row is HermesUsageRow => row != null);
+      return rows.filter(row => isKiroGoBilling(row.billing_provider, row.billing_base_url))
+        .map(parseHermesSqlRow).filter((row): row is HermesUsageRow => row != null);
     }
 
     const rows = db.prepare(`
       SELECT started_at, model, api_call_count AS events,
              input_tokens AS input, output_tokens AS output,
              cache_read_tokens AS cached, cache_write_tokens AS cache_write,
-             reasoning_tokens AS reasoning
+             reasoning_tokens AS reasoning, billing_provider, billing_base_url
       FROM sessions
-      WHERE ${kiroGoSql()}
     `).all() as HermesSqlRow[];
-    return rows.map(parseHermesSqlRow).filter((row): row is HermesUsageRow => row != null);
+    return rows.filter(row => isKiroGoBilling(row.billing_provider, row.billing_base_url))
+      .map(parseHermesSqlRow).filter((row): row is HermesUsageRow => row != null);
   } catch {
     return [];
   } finally {
@@ -250,18 +170,16 @@ async function loadHermesUsage(dbPath: string): Promise<HermesUsageRow[]> {
   }
 }
 
-function kiroGoSql(alias = ''): string {
-  const col = (name: string) => (alias ? `${alias}.${name}` : name);
-  return `
-    ${col('billing_base_url')} LIKE '%:8080/%'
-    OR ${col('billing_base_url')} LIKE '%:8080'
-    OR ${col('billing_base_url')} LIKE '%kiro.%'
-    OR ${col('billing_provider')} LIKE '%kiro-go%'
-    OR ${col('billing_provider')} LIKE '%kiro%'
-  `;
+/** Shared by both scanners so every Hermes row belongs to exactly one source. */
+export function isKiroGoBilling(provider?: string | null, baseUrl?: string | null): boolean {
+  const billing = `${provider ?? ''} ${baseUrl ?? ''}`.toLowerCase();
+  return (provider ?? '').toLowerCase().includes('kiro')
+    || billing.includes('kiro.') || /:8080(?:\/|$)/.test(billing);
 }
 
 interface HermesSqlRow {
+  billing_provider?: string;
+  billing_base_url?: string;
   started_at?: number | string;
   model?: string;
   events?: number;
@@ -296,109 +214,3 @@ function parseHermesSqlRow(row: HermesSqlRow): HermesUsageRow | null {
   };
 }
 
-async function loadLifetimeSnapshot(
-  extraDirs: readonly string[] = [],
-  home = homedir(),
-  env: NodeJS.Dict<string> = process.env,
-): Promise<LifetimeSnapshot | null> {
-  let best: LifetimeSnapshot | null = null;
-  for (const file of await listLifetimeConfigFiles(extraDirs, home, env)) {
-    const snapshot = await readLifetimeConfig(file);
-    if (!snapshot) continue;
-    if (!best || snapshot.totalTokens > best.totalTokens) best = snapshot;
-  }
-  return best;
-}
-
-async function listLifetimeConfigFiles(
-  extraDirs: readonly string[],
-  home: string,
-  env: NodeJS.Dict<string>,
-): Promise<string[]> {
-  const files = new Set<string>();
-  for (const root of resolveKiroProxyDataDirs(extraDirs, home, env)) {
-    for (const candidate of [root, join(root, 'data')]) {
-      try {
-        const info = await stat(candidate);
-        if (info.isFile() && basename(candidate) === 'config.json') files.add(candidate);
-        else if (info.isDirectory()) {
-          const entries = await readdir(candidate);
-          if (entries.includes('config.json')) files.add(join(candidate, 'config.json'));
-        }
-      } catch {
-        continue;
-      }
-    }
-  }
-  return [...files];
-}
-
-async function readLifetimeConfig(filePath: string): Promise<LifetimeSnapshot | null> {
-  try {
-    const raw = JSON.parse(await readFile(filePath, 'utf-8')) as Record<string, unknown>;
-    const totalTokens = Math.max(0, Math.round(Number(raw.totalTokens ?? raw.total_tokens ?? 0)));
-    if (totalTokens <= 0) return null;
-    const totalRequests = Math.max(0, Math.round(Number(raw.totalRequests ?? raw.total_requests ?? 0)));
-    return { totalTokens, totalRequests };
-  } catch {
-    return null;
-  }
-}
-
-function groupHermesByDay(rows: HermesUsageRow[]): Map<string, HermesUsageRow[]> {
-  const byDay = new Map<string, HermesUsageRow[]>();
-  for (const row of rows) {
-    const usageDate = dateKey(row.when);
-    const list = byDay.get(usageDate);
-    if (list) list.push(row);
-    else byDay.set(usageDate, [row]);
-  }
-  return byDay;
-}
-
-function splitEvenly(total: number, count: number): number[] {
-  if (count <= 0) return [];
-  const base = Math.floor(total / count);
-  const remainder = total - base * count;
-  return Array.from({ length: count }, (_, index) => base + (index < remainder ? 1 : 0));
-}
-
-function sharesFromHermes(rows: HermesUsageRow[]): ModelShare[] {
-  const byModel = new Map<string, ModelShare>();
-  for (const row of rows) {
-    const model = normalizeProxyModel(row.model);
-    const current = byModel.get(model) ?? { model, tokens: 0, events: 0 };
-    current.tokens += rowTokens(row);
-    current.events += row.events;
-    byModel.set(model, current);
-  }
-  return [...byModel.values()].sort((a, b) => b.tokens - a.tokens);
-}
-
-function splitByShare(totalTokens: number, totalEvents: number, shares: ModelShare[]): ModelShare[] {
-  if (shares.length === 0) {
-    return [{ model: 'auto', tokens: totalTokens, events: totalEvents }];
-  }
-  const tokenSum = shares.reduce((sum, share) => sum + share.tokens, 0);
-  const eventSum = shares.reduce((sum, share) => sum + share.events, 0) || shares.length;
-  const parts: ModelShare[] = [];
-  let usedTokens = 0;
-  let usedEvents = 0;
-  for (const [index, share] of shares.entries()) {
-    const last = index === shares.length - 1;
-    const tokens = last
-      ? totalTokens - usedTokens
-      : Math.round(totalTokens * (share.tokens / tokenSum));
-    const events = last
-      ? Math.max(0, totalEvents - usedEvents)
-      : Math.max(0, Math.round(totalEvents * (share.events / eventSum)));
-    usedTokens += tokens;
-    usedEvents += events;
-    if (tokens > 0) parts.push({ model: share.model, tokens, events });
-  }
-  return parts.length > 0 ? parts : [{ model: shares[0].model, tokens: totalTokens, events: totalEvents }];
-}
-
-function rowTokens(row: HermesUsageRow): number {
-  return row.input + row.output + row.cached + row.cacheWrite + row.reasoning;
-}

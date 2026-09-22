@@ -1,7 +1,7 @@
 // ── 统计维度 ──
 
 export type Provider = 'anthropic' | 'openai' | 'google' | 'github' | 'alibaba' | 'moonshot' | 'sourcegraph' | 'inflection' | 'cursor' | 'kiro' | 'xai' | 'trae' | 'zhipu' | (string & {});
-export type Product = 'claude-code' | 'codex' | 'copilot-cli' | 'copilot-vscode' | 'gemini-cli' | 'antigravity' | 'qwen-code' | 'kimi-code' | 'amp' | 'droid' | 'opencode' | 'pi' | 'cursor' | 'kiro' | 'hermes' | 'trae' | 'trae-cn' | 'trae-intl' | (string & {});
+export type Product = 'claude-code' | 'codex' | 'copilot-cli' | 'copilot-vscode' | 'gemini-cli' | 'antigravity' | 'qwen-code' | 'kimi-code' | 'amp' | 'droid' | 'opencode' | 'pi' | 'cursor' | 'grok-bot' | 'kiro' | 'hermes' | 'grok' | 'trae' | 'trae-cn' | 'trae-intl' | (string & {});
 export type Channel = 'cli' | 'ide' | 'web' | 'api';
 export type CostStatus = 'exact' | 'estimated' | 'unavailable';
 export type DeviceStatus = 'active' | 'disabled';
@@ -35,9 +35,13 @@ export interface IngestDay {
   breakdowns: IngestBreakdown[];
   hourly?: IngestHourlyBucket[];
   activity?: IngestActivityDay;
+  /** Products this snapshot replaces even when their breakdown list is empty. */
+  replacedProducts?: string[];
 }
 
 export interface IngestBreakdown {
+  /** Estimated includes inferred token splits or time attribution; reported is not an official invoice. */
+  tokenQuality?: 'estimated' | 'reported';
   provider: Provider;
   product: Product;
   channel: Channel;
@@ -111,6 +115,8 @@ export interface IngestResponse {
 // ── 公开接口 ──
 
 export interface OverviewResponse {
+  /** Tokens from rows with inferred counts, splits, or time attribution. */
+  estimatedTokenCount?: number;
   /** Site-timezone calendar day, YYYY-MM-DD. Heatmap / streaks must use this, not the browser clock. */
   today?: string;
   totalDays: number;
@@ -122,6 +128,7 @@ export interface OverviewResponse {
   averageDailyCostUsd: number;
   dailyTrend: DailyTrendItem[];
   providerDailyTrend: ProviderDailyTrendItem[];
+  toolDailyTrend?: ToolDailyTrendItem[];
   tokenComposition: TokenCompositionItem[];
   costComposition?: CostCompositionItem[];
   modelCostShare: ShareItem[];
@@ -133,6 +140,7 @@ export interface OverviewResponse {
   hourlyTrend?: HourlyTrendItem[];
   hourlyHeatmap?: HourlyHeatmapItem[];
   hourlyProviderTrend?: HourlyProviderTrendItem[];
+  hourlyToolTrend?: HourlyToolTrendItem[];
   hourlyTokenComposition?: HourlyTokenCompositionItem[];
   hourlyCostComposition?: HourlyCostCompositionItem[];
   interactionMetrics?: InteractionMetricsPayload;
@@ -190,6 +198,12 @@ export interface ProviderDailyTrendItem {
   estimatedCostUsd: number;
 }
 
+export interface ToolDailyTrendItem {
+  usageDate: string;
+  tool: string;
+  estimatedCostUsd: number;
+}
+
 export interface TokenCompositionItem {
   usageDate: string;
   inputTokens: number;
@@ -217,6 +231,13 @@ export interface HourlyProviderTrendItem {
   usageDate: string;
   hour: number;
   provider: string;
+  estimatedCostUsd: number;
+}
+
+export interface HourlyToolTrendItem {
+  usageDate: string;
+  hour: number;
+  tool: string;
   estimatedCostUsd: number;
 }
 

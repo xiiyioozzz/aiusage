@@ -44,10 +44,11 @@ export function formatPercent(v: number): string {
 
 export function formatProjectLabel(
   raw: string,
-  labels: { emptyWindow: string; otherProjects: string },
+  labels: { emptyWindow: string; otherProjects: string; grokBotSubagent?: string },
 ): string {
   const value = raw.trim();
   if (value === 'empty-window') return labels.emptyWindow;
+  if (value === 'grok-bot-subagent') return labels.grokBotSubagent ?? 'Grok Bot subagent';
   if (value === 'Other' || value === 'other') return labels.otherProjects;
   return raw;
 }

@@ -6,36 +6,38 @@ import {
   ChartContainer, ChartTooltip, ChartTooltipContent, type ChartConfig,
 } from './ui/chart';
 import type { OverviewPayload } from '../hooks/use-overview';
-import { getChartColors, providerLabel } from '../constants';
+import { formatProductLabel, getChartColors, providerLabel } from '../constants';
 import { formatUsd, formatUsdFull, isHourAxisKey, shortDate, longDate } from '../utils/format';
 import { pivotProviderTrend } from '../utils/data';
 import { EmptyState, ChartLegend } from './chart-helpers';
 import { useIsDark } from '../hooks/use-dark';
 import type { CurrencyMode } from '../hooks/use-cny-rate';
+import type { ToolDailyTrendItem } from '@aiusage/shared';
 
 export function CostTrendChart({
   data,
   providerTrend,
   currency = 'auto',
+  getLabel = providerLabel,
 }: {
   data: OverviewPayload['dailyTrend'];
   providerTrend: OverviewPayload['providerDailyTrend'];
   currency?: CurrencyMode;
+  getLabel?: (id: string) => string;
 }) {
   const isDark = useIsDark();
-  if (!data.length) return <EmptyState label="No data" />;
-
   const { data: pivoted, providers } = useMemo(
     () => pivotProviderTrend(data, providerTrend),
     [data, providerTrend],
   );
+  if (!data.length) return <EmptyState label="No data" />;
 
   const hourly = data.some((row) => isHourAxisKey(row.usageDate));
   const barW = hourly ? 18 : data.length <= 7 ? 94 : data.length <= 30 ? 47 : 20;
   const colors = getChartColors(isDark);
 
   const config = Object.fromEntries(
-    providers.map((p, i) => [p, { label: providerLabel(p), color: colors[i % colors.length] }]),
+    providers.map((p, i) => [p, { label: getLabel(p), color: colors[i % colors.length] }]),
   ) satisfies ChartConfig;
 
   return (
@@ -77,11 +79,31 @@ export function CostTrendChart({
       {providers.length > 1 && (
         <ChartLegend
           items={providers.map((p, i) => ({
-            label: providerLabel(p),
+            label: getLabel(p),
             color: colors[i % colors.length],
           }))}
         />
       )}
     </>
   );
+}
+
+export function ToolTrendChart({
+  data,
+  toolTrend,
+  currency = 'auto',
+}: {
+  data: OverviewPayload['dailyTrend'];
+  toolTrend: ToolDailyTrendItem[] | undefined;
+  currency?: CurrencyMode;
+}) {
+  const providerTrend = useMemo(
+    () => (toolTrend ?? []).map((row) => ({
+      usageDate: row.usageDate,
+      provider: row.tool,
+      estimatedCostUsd: row.estimatedCostUsd,
+    })),
+    [toolTrend],
+  );
+  return <CostTrendChart data={data} providerTrend={providerTrend} currency={currency} getLabel={formatProductLabel} />;
 }

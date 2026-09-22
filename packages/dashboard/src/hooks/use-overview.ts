@@ -1,8 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import type { OverviewResponse } from '@aiusage/shared';
-import { DEMO_OVERVIEW, DEMO_HEALTH } from '../demo-data';
 import { arrSum } from '../utils/format';
-import { buildQuery, padMonth } from '../utils/data';
+import { loadOverview } from '../utils/load-overview';
 import { getMetricAvailability } from '../utils/metric-availability';
 
 // ── Types ──
@@ -21,18 +20,6 @@ export interface HealthPayload { ok: boolean; siteId: string; version: string; s
 export interface OverviewPayload extends OverviewResponse { ok: boolean }
 export interface FacetOption { value: string; label: string; estimatedCostUsd?: number; eventCount?: number }
 
-// ── Fetch helper ──
-
-async function fetchJson<T>(url: string): Promise<T> {
-  const r = await fetch(url);
-  if (!r.ok) throw new Error(`HTTP ${r.status}`);
-  const ct = r.headers.get('content-type') ?? '';
-  if (!ct.includes('application/json')) {
-    throw new Error('Response is not JSON');
-  }
-  return r.json() as Promise<T>;
-}
-
 // ── Hook ──
 
 export function useOverview(filters: FiltersState) {
@@ -43,29 +30,24 @@ export function useOverview(filters: FiltersState) {
   const [tick, setTick] = useState(0);
   const [isDemo, setIsDemo] = useState(false);
 
-  // Fetch data — falls back to demo data when API is unreachable (local dev)
+  // Production failures remain visible; sample data requires explicit opt-in.
   useEffect(() => {
     let cancelled = false;
     (async () => {
       setLoading(true);
       setError(null);
       try {
-        const [ov, hp] = await Promise.all([
-          fetchJson<OverviewPayload>(`/api/v1/public/overview?${buildQuery(filters)}`),
-          fetchJson<HealthPayload>('/api/v1/health').catch(
-            () => ({ ok: false, siteId: 'unknown', version: 'unknown' }),
-          ),
-        ]);
+        const result = await loadOverview(filters, { demo: import.meta.env.VITE_DEMO_MODE === 'true' });
         if (cancelled) return;
-        setOverview(filters.range === 'month' ? padMonth(ov) : ov);
-        setHealth(hp);
+        setOverview(result.overview);
+        setHealth(result.health);
+        setIsDemo(result.isDemo);
+      } catch (err) {
+        if (cancelled) return;
+        setOverview(null);
+        setHealth(null);
         setIsDemo(false);
-      } catch {
-        if (cancelled) return;
-        const demo = filters.range === 'month' ? padMonth(DEMO_OVERVIEW) : DEMO_OVERVIEW;
-        setOverview(demo);
-        setHealth(DEMO_HEALTH);
-        setIsDemo(true);
+        setError(err instanceof Error ? err.message : 'Request failed');
       } finally {
         if (!cancelled) setLoading(false);
       }

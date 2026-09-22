@@ -2,7 +2,7 @@ import { readdir, readFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { basename, dirname, join } from 'node:path';
 import type { IngestBreakdown } from '@aiusage/shared';
-import { calculateCost, PRICING_VERSION, type PricingCatalog } from '@aiusage/shared';
+import { calculateCost, PRICING_VERSION, catalogNeedsLivePrices, getPricingCatalog, resolveLiveCatalog, MODELS_DEV_URL, usagesNeedXaiLive, XAI_PRICING_URL, type PricingCatalog } from '@aiusage/shared';
 import { scanDates } from './scan.js';
 import { parseTs, dateKey, fileModifiedTs } from './scanners/utils.js';
 import { resolveKimiCodeHome } from './scanners/kimi.js';
@@ -12,9 +12,11 @@ import {
   resolveTraeNativeCacheDir,
 } from './scanners/trae.js';
 import { discoverOpenCodeUsageDates } from './scanners/opencode.js';
+import { discoverKiroIdeDates } from './scanners/kiro.js';
 import { discoverKiroProxyDates } from './scanners/kiro-proxy.js';
 import { discoverKiroRecoveredDates } from './scanners/kiro-recovered.js';
 import { discoverHermesDates } from './scanners/hermes.js';
+import { discoverGrokDates } from './scanners/grok.js';
 import { discoverCursorDates } from './scanners/cursor.js';
 import type { PricingInfo } from './pricing.js';
 
@@ -96,6 +98,7 @@ export async function buildLocalReport(
     kiroProxyDataDirs: options.kiroProxyDataDirs,
     tools: options.tools,
   });
+  const pricing = await supplementReportPricing(results.flatMap((result) => result.breakdowns), options);
 
   for (const result of results) {
     const usageDate = result.usageDate;
@@ -106,7 +109,7 @@ export async function buildLocalReport(
       daysWithData += 1;
 
       for (const breakdown of result.breakdowns) {
-        const breakdownTotals = toBreakdownTotals(breakdown, pricingWarnings, options.pricingCatalog);
+        const breakdownTotals = toBreakdownTotals(breakdown, pricingWarnings, pricing.catalog);
         dayTotals.estimatedCostUsd += breakdownTotals.estimatedCostUsd;
         mergeTotals(totals, breakdownTotals);
         mergeTotals(getOrCreate(bySource, `${breakdown.provider}/${breakdown.product}`), breakdownTotals);
@@ -141,12 +144,41 @@ export async function buildLocalReport(
         return { source, model, ...summary };
       })
       .sort((a, b) => b.estimatedCostUsd - a.estimatedCostUsd || b.totalTokens - a.totalTokens),
-    pricing: options.pricingInfo ?? {
-      source: 'bundled',
-      version: options.pricingCatalog?.version ?? 'bundled',
-    },
+    pricing: pricing.info,
     pricingWarnings: [...pricingWarnings].sort(),
     ...(options.tools ? { tools: [...options.tools] } : {}),
+  };
+}
+
+async function supplementReportPricing(
+  breakdowns: IngestBreakdown[],
+  options: BuildReportOptions,
+): Promise<{ catalog?: PricingCatalog; info: PricingInfo }> {
+  const base = options.pricingCatalog ?? getPricingCatalog();
+  const info = options.pricingInfo ?? {
+    source: 'bundled' as const,
+    version: options.pricingCatalog?.version ?? base.version,
+  };
+  const usages = breakdowns.map((breakdown) => ({
+    provider: breakdown.provider,
+    product: breakdown.product,
+    model: breakdown.model,
+  }));
+  if (!catalogNeedsLivePrices(base, usages) && !usagesNeedXaiLive(base, usages)) {
+    return { catalog: options.pricingCatalog, info };
+  }
+  const catalog = await resolveLiveCatalog(base, usages);
+  if (catalog === base) return { catalog: options.pricingCatalog, info };
+  return {
+    catalog,
+    info: {
+      source: 'remote',
+      version: catalog.version,
+      url: catalog.version.includes('+xai-docs') && !catalog.version.includes('+models.dev')
+        ? XAI_PRICING_URL
+        : MODELS_DEV_URL,
+      fetchedAt: new Date().toISOString(),
+    },
   };
 }
 
@@ -203,10 +235,12 @@ async function discoverAllDates(
   if (includes('cursor')) discoveries.push(discoverCursorDates().then(found => { found.forEach(date => dates.add(date)); }));
   if (includes('kiro')) {
     discoveries.push(discoverGenericJsonlDates(join(home, '.kiro', 'sessions'), dates));
+    discoveries.push(discoverKiroIdeDates().then(found => { found.forEach(date => dates.add(date)); }));
     discoveries.push(discoverKiroProxyDates(kiroProxyDataDirs).then(found => { found.forEach(date => dates.add(date)); }));
     discoveries.push(discoverKiroRecoveredDates(kiroProxyDataDirs).then(found => { found.forEach(date => dates.add(date)); }));
   }
   if (includes('hermes')) discoveries.push(discoverHermesDates().then(found => { found.forEach(date => dates.add(date)); }));
+  if (includes('grok')) discoveries.push(discoverGrokDates().then(found => { found.forEach(date => dates.add(date)); }));
   if (includes('codex')) discoveries.push(discoverCodexDates(dates));
   if (includes('gemini-cli')) discoveries.push(discoverGeminiDates(dates));
   if (includes('copilot-vscode')) discoveries.push(discoverCopilotVscodeDates(dates));
@@ -693,6 +727,9 @@ export function calculateBreakdownCost(
   warnings: Set<string>,
   pricingCatalog?: PricingCatalog,
 ): number {
+  if (breakdown.tokenQuality === 'estimated') {
+    warnings.add(`${breakdown.product} 的部分 Token 来自本地估算，费用为估算值，不是官方账单。`);
+  }
   const effectivePricingVersion = pricingCatalog?.version ?? PRICING_VERSION;
   const sourceCostMatchesCatalog =
     breakdown.product === 'trae-intl' ||
@@ -713,7 +750,8 @@ export function calculateBreakdownCost(
       cacheWriteTokens: breakdown.cacheWriteTokens,
       cacheWrite5mTokens: breakdown.cacheWrite5mTokens,
       cacheWrite1hTokens: breakdown.cacheWrite1hTokens,
-      outputTokens: breakdown.outputTokens,
+      // Scanner breakdowns store visible output and reasoning without overlap.
+      outputTokens: breakdown.outputTokens + breakdown.reasoningOutputTokens,
     },
     {
       ...(pricingCatalog ? { catalog: pricingCatalog } : {}),
