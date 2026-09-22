@@ -72,17 +72,17 @@ export function supplementCatalogFromXaiPricing(
   models: Record<string, ModelPricing>,
   usages: PricingUsage[],
 ): PricingCatalog {
-  let draft: PricingCatalog | null = null;
+  const state: { catalog: PricingCatalog | null } = { catalog: null };
   const ensure = (): PricingCatalog => {
-    if (!draft) draft = structuredClone(catalog);
-    return draft;
+    if (!state.catalog) state.catalog = structuredClone(catalog);
+    return state.catalog;
   };
 
   let added = false;
   for (const usage of usages) {
     const listed = canonicalListModel(usage.model);
     if (listed.provider !== 'xai') continue;
-    const current = draft ?? catalog;
+    const current = state.catalog ?? catalog;
     const bucket = current.providers.xai?.grok?.models ?? {};
     const baseId = resolveParsedId(models, listed.id);
     const fastId = baseId ? `${baseId}-fast` : `${listed.id}-fast`;
@@ -104,9 +104,11 @@ export function supplementCatalogFromXaiPricing(
     }
   }
 
-  if (!draft || !added) return catalog;
-  draft.version = catalog.version.includes('+xai-docs') ? catalog.version : `${catalog.version}+xai-docs`;
-  return draft;
+  if (!state.catalog || !added) return catalog;
+  state.catalog.version = catalog.version.includes('+xai-docs')
+    ? catalog.version
+    : `${catalog.version}+xai-docs`;
+  return state.catalog;
 }
 
 function resolveParsedId(models: Record<string, ModelPricing>, id: string): string | null {

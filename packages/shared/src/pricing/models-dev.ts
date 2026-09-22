@@ -107,14 +107,14 @@ export function supplementCatalogFromModelsDev(
   index: ModelsDevIndex,
   usages: PricingUsage[],
 ): PricingCatalog {
-  let draft: PricingCatalog | null = null;
+  const state: { catalog: PricingCatalog | null } = { catalog: null };
   const ensure = (): PricingCatalog => {
-    if (!draft) draft = structuredClone(catalog);
-    return draft;
+    if (!state.catalog) state.catalog = structuredClone(catalog);
+    return state.catalog;
   };
 
   for (const usage of usages) {
-    const current = draft ?? catalog;
+    const current = state.catalog ?? catalog;
     if (!usage.model.trim() || hasListPrice(usage.provider, usage.product, usage.model, current)) continue;
     const listed = canonicalListModel(usage.model);
     const provider = listed.provider ?? (officialListProduct(usage.provider) ? usage.provider : undefined);
@@ -141,9 +141,11 @@ export function supplementCatalogFromModelsDev(
     if (fastPricing && !productPricing.models[fastId]) productPricing.models[fastId] = fastPricing;
   }
 
-  if (!draft) return catalog;
-  draft.version = catalog.version.includes('+models.dev') ? catalog.version : `${catalog.version}+models.dev`;
-  return draft;
+  if (!state.catalog) return catalog;
+  state.catalog.version = catalog.version.includes('+models.dev')
+    ? catalog.version
+    : `${catalog.version}+models.dev`;
+  return state.catalog;
 }
 
 function toModelPricing(model: ModelsDevModel): ModelPricing | null {
